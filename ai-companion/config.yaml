@@ -53,8 +53,19 @@ asr:
 
 # 语音合成 TTS
 tts:
-  # provider: cloud_volc / local_cosyvoice
-  provider: "cloud_volc"
+  # provider: cloud_openai_tts / cloud_volc / local_cosyvoice
+  # 第一阶段默认用 OpenAI TTS（与 LLM/ASR 复用 openai 包，最简单）
+  # 火山引擎情感 TTS 待 T2-06 补全 WebSocket 实现
+  provider: "cloud_openai_tts"
+  openai:
+    # 不填则尝试复用 llm.deepseek.api_key（多数中转服务兼容）
+    api_key: "${OPENAI_API_KEY}"
+    base_url: ""                # 留空走 OpenAI 官方；可填兼容服务 URL
+    model: "tts-1"              # tts-1 / tts-1-hd
+    voice: "nova"               # nova 是 OpenAI 提供的柔和女声
+    format: "mp3"
+    speed: 1.0
+    timeout: 30
   volc:
     app_id: "${VOLC_APP_ID}"
     access_token: "${VOLC_ACCESS_TOKEN}"
@@ -63,6 +74,8 @@ tts:
     pitch: 1.0
     volume: 1.0
   cache_dir: "data/tts_cache"
+  enable_cache: true
+  cache_max_entries: 200
 
 # 记忆系统
 memory:

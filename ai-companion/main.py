@@ -20,7 +20,8 @@ from utils.config import config
 from utils.logger import logger
 from llm import get_default_llm, Message
 from core.personality import personality, PersonalityContext
-from speech import get_default_asr
+from speech import get_default_asr, get_default_tts
+from speech.player import is_available as player_available
 from speech.recorder import is_available as mic_available
 
 
@@ -62,6 +63,14 @@ def main() -> int:
     logger.info(
         f"录音环境可用: {mic_available()} "
         f"（无 sounddevice/PortAudio 时只影响真实录音，不影响 ASR 模块加载）"
+    )
+
+    # T1-05 自检：实例化 TTS 适配器并验证抽象接口可用
+    tts = get_default_tts()
+    logger.info(f"TTS 适配器就绪: {tts!r}")
+    logger.info(
+        f"播放环境可用: {player_available()} "
+        f"（无 audio device 时只影响真实播放，不影响 TTS 模块加载）"
     )
 
     if api_key:
