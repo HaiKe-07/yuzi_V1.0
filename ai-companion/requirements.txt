@@ -1,0 +1,29 @@
+# ===== AI 陪伴助手 依赖 =====
+# Python 3.11+
+
+# --- 基础 ---
+PyYAML>=6.0.1
+python-dotenv>=1.0.0
+loguru>=0.7.2
+
+# --- LLM ---
+openai>=1.12.0          # DeepSeek 兼容 OpenAI SDK 调用
+httpx>=0.27.0
+
+# --- 语音 ASR/TTS ---
+# 注：以下云端 SDK 在第一阶段按需启用，本地部署时再装重型包
+sounddevice>=0.4.6     # 麦克风录音
+numpy>=1.26.0
+# websocket-client>=1.7.0  # 讯飞 ASR/WebSocket 用，第二阶段启用
+
+# --- 记忆系统 ---
+# 第一阶段只用 SQLite
+# ChromaDB 在第二阶段（长期记忆）启用：
+# chromadb>=0.5.0
+
+# --- 桌面 UI（第一阶段可暂不启用） ---
+# PyQt5>=5.15.10
+# 或使用 Electron + Vue，不依赖 Python 端 UI 库
+
+# --- 工具（按阶段启用） ---
+# requests>=2.31.0      # 天气查询等 HTTP 调用

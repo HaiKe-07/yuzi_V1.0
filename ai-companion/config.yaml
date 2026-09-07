@@ -1,0 +1,110 @@
+# AI 陪伴助手 配置文件
+# 所有云端密钥请勿提交到公开仓库，建议通过 .env 或环境变量覆盖
+
+app:
+  name: "AI 陪伴助手"
+  version: "0.1.0"
+  # 首次对话由用户命名，开发期可设默认名
+  companion_name: ""
+  language: "zh-CN"
+  # 数据目录（相对路径基于项目根目录）
+  data_dir: "data"
+  log_dir: "logs"
+  log_level: "INFO"   # DEBUG / INFO / WARNING / ERROR
+
+# 大语言模型
+llm:
+  # 当前使用哪个适配器：deepseek / local
+  provider: "deepseek"
+  deepseek:
+    api_key: "${DEEPSEEK_API_KEY}"
+    model: "deepseek-chat"
+    base_url: "https://api.deepseek.com"
+    temperature: 0.8
+    max_tokens: 1024
+    timeout: 30
+  local:
+    base_url: "http://localhost:11434"
+    model: "qwen2.5:7b"
+    temperature: 0.8
+    max_tokens: 1024
+    timeout: 60
+
+# 语音识别 ASR
+asr:
+  # provider: cloud_xfyun / local_funasr
+  provider: "cloud_xfyun"
+  sample_rate: 16000
+  channels: 1
+  chunk_duration_ms: 300
+  xfyun:
+    app_id: "${XFYUN_APP_ID}"
+    api_key: "${XFYUN_API_KEY}"
+    api_secret: "${XFYUN_API_SECRET}"
+
+# 语音合成 TTS
+tts:
+  # provider: cloud_volc / local_cosyvoice
+  provider: "cloud_volc"
+  volc:
+    app_id: "${VOLC_APP_ID}"
+    access_token: "${VOLC_ACCESS_TOKEN}"
+    voice_type: "zh_female_wanwan"  # 温柔女声
+    speed: 1.0
+    pitch: 1.0
+    volume: 1.0
+  cache_dir: "data/tts_cache"
+
+# 记忆系统
+memory:
+  sqlite_path: "data/companion.db"
+  chroma_path: "data/chroma"
+  short_term_turns: 20      # 短期记忆保留轮数
+  recall_top_k: 5          # 检索召回数量
+
+# 情绪系统
+emotion:
+  decay_interval_sec: 600  # 情绪自然衰减间隔
+  user_emotion_model: "llm" # llm / acoustic
+  ai_emotion_enabled: true
+
+# 亲密度系统
+intimacy:
+  initial_score: 5.0
+  max_score: 100.0
+  deep_talk_gain: 2.0
+  mention_user_fact_gain: 3.0
+  hurt_loss_min: 5.0
+  hurt_loss_max: 15.0
+  silence_days_loss: 2.0
+  daily_chat_gain: 0.5
+
+# 主动话题
+proactive:
+  silence_threshold_sec: 21600  # 6 小时
+  morning_hour: 8
+  night_remind_hour: 23
+  random_share_prob: 0.05
+
+# 唤醒词
+wake_word:
+  enabled: false        # 第二阶段开启
+  engine: "openwakeword"  # openwakeword / porcupine
+  keyword: ""
+
+# 桌面 UI
+ui:
+  type: "electron"      # electron / pyqt
+  websocket_port: 8765
+  http_port: 8766
+  live2d_model_path: "ui/assets/live2d/default"
+
+# 工具
+tools:
+  music:
+    enabled: false
+    kugou_path: ""
+  weather:
+    enabled: false
+    api: "qweather"
+    api_key: "${QWEATHER_API_KEY}"

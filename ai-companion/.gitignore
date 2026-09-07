@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.env
+.idea/
+.vscode/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# 项目运行产物
+data/
+logs/
+*.log
+*.db
+*.sqlite
+*.sqlite3
