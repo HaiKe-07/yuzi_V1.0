@@ -71,6 +71,8 @@ _BASE_PERSONALITY = """\
 - 用户称呼：{user_alias}
 - 关系阶段：{intimacy_stage}（亲密度 {intimacy_score}/100）
 - 推荐称呼方式：{address_hint}
+- 称呼要自然多变：不要每句都叫对方，根据语境有时叫、有时省略，
+  熟悉后可以偶尔用昵称或撒娇式称呼，但不要刻意堆砌。
 - 你当前的情绪：{ai_emotion_brief}
 
 # 近期值得记住的事
@@ -100,6 +102,9 @@ class PersonalityContext:
     """动态上下文。第二阶段各模块会填充对应字段。
 
     缺省字段为 None，build_system_prompt 时会用 _DEFAULTS 兜底。
+
+    T2-04 起支持 from_intimacy_and_emotion 类方法，从亲密度管理器
+    和情绪引擎直接构造，便于 ConversationManager 一行调用。
     """
     companion_name: str | None = None
     user_alias: str | None = None      # 用户希望被怎么称呼（亲密度系统产出）
@@ -108,6 +113,74 @@ class PersonalityContext:
     address_hint: str | None = None    # 当前阶段的称呼建议
     ai_emotion_brief: str | None = None  # AI 当前情绪一句话描述
     memory_brief: str | None = None    # 最近值得记住的几条记忆摘要
+
+    @classmethod
+    def from_intimacy_and_emotion(
+        cls,
+        intimacy_manager: Any | None = None,
+        emotion_engine: Any | None = None,
+        user_alias: str | None = None,
+        memory_brief: str | None = None,
+    ) -> "PersonalityContext":
+        """从 IntimacyManager + AIEmotionEngine 构造上下文。
+
+        Args:
+            intimacy_manager: IntimacyManager 实例（或 None 关闭亲密度注入）
+            emotion_engine:   AIEmotionEngine 实例（或 None 关闭情绪注入）
+            user_alias:        用户希望被怎么称呼（由用户在设置中指定，可选）
+            memory_brief:      近期记忆摘要（T2-05 接入，可选）
+        """
+        ctx = cls()
+        # 亲密度上下文
+        if intimacy_manager is not None:
+            try:
+                i_ctx = intimacy_manager.context()
+                ctx.intimacy_stage = i_ctx.get("level")
+                ctx.intimacy_score = i_ctx.get("score")
+                ctx.address_hint = i_ctx.get("address_hint")
+            except Exception:
+                pass
+        # 用户指定称呼优先于亲密度建议（用户偏好 > 关系阶段）
+        if user_alias:
+            ctx.user_alias = user_alias
+        # AI 情绪简述
+        if emotion_engine is not None:
+            try:
+                e_ctx = emotion_engine.emotion_context()
+                ctx.ai_emotion_brief = cls._emotion_brief(e_ctx)
+            except Exception:
+                pass
+        # 记忆摘要
+        if memory_brief:
+            ctx.memory_brief = memory_brief
+        return ctx
+
+    @staticmethod
+    def _emotion_brief(e_ctx: dict) -> str:
+        """把 emotion_context 输出转成一句话简述。"""
+        label = e_ctx.get("label", "平静")
+        intensity = e_ctx.get("intensity", 0.0)
+        # 关系维度补充
+        parts = [f"情绪：{label}"]
+        if intensity >= 0.6:
+            parts.append("情绪较强烈")
+        elif intensity <= 0.2:
+            parts.append("情绪平静")
+        aff = e_ctx.get("affection", 0)
+        if aff >= 0.6:
+            parts.append("对用户亲近")
+        elif aff <= 0.2:
+            parts.append("对用户稍疏远")
+        lone = e_ctx.get("loneliness", 0)
+        if lone >= 0.5:
+            parts.append("感到有点孤独")
+        con = e_ctx.get("concern", 0)
+        if con >= 0.5:
+            parts.append("担心用户")
+        play = e_ctx.get("playfulness", 0)
+        if play >= 0.5:
+            parts.append("想调皮一下")
+        return "、".join(parts)
 
 
 class PersonalityEngine:

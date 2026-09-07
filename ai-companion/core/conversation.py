@@ -361,17 +361,16 @@ class ConversationManager:
         )
 
         try:
-            sys_prompt = self.personality.build_system_prompt()
-            # 注入 AI 当前情绪上下文
-            if self.emotion is not None and ai_emo_label:
-                try:
-                    ctx = self.emotion.emotion_context()
-                    sys_prompt = sys_prompt + "\n" + ctx["prompt_hint"]
-                except Exception as e:
-                    logger.debug(f"情绪上下文注入失败: {e}")
-            # T2-03: 注入亲密度上下文（称呼风格提示）
-            if intimacy_ctx is not None:
-                sys_prompt = sys_prompt + "\n" + intimacy_ctx["prompt_hint"]
+            # T2-04: 用 PersonalityContext 组合亲密度+情绪+用户称呼
+            # 一次性注入人格 prompt，不再拼接 prompt_hint
+            from core.personality import PersonalityContext
+            user_alias = config.get("app.user_alias") or None
+            p_ctx = PersonalityContext.from_intimacy_and_emotion(
+                intimacy_manager=self.intimacy,
+                emotion_engine=self.emotion if ai_emo_label else None,
+                user_alias=user_alias,
+            )
+            sys_prompt = self.personality.build_system_prompt(p_ctx)
             resp = self.llm.chat(
                 self._to_llm_messages(),
                 system_prompt=sys_prompt,
