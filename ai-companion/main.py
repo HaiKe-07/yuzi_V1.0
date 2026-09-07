@@ -18,6 +18,7 @@ if str(ROOT) not in sys.path:
 
 from utils.config import config
 from utils.logger import logger
+from llm import get_default_llm, Message
 
 
 def banner() -> str:
@@ -42,6 +43,21 @@ def main() -> int:
     logger.info(f"ASR provider = {config.get('asr.provider')}")
     logger.info(f"TTS provider = {config.get('tts.provider')}")
     logger.info(f"短期记忆轮数 = {config.get('memory.short_term_turns')}")
+
+    # T1-02 自检：实例化 LLM 适配器并验证抽象接口可用
+    llm = get_default_llm()
+    logger.info(f"LLM 适配器就绪: {llm!r}")
+    api_key = getattr(llm, "api_key", "")
+    if api_key:
+        try:
+            msgs = [Message(role="user", content="你好，请用一句话自我介绍。")]
+            resp = llm.chat(msgs, system_prompt="你是一位温柔体贴的 AI 陪伴助手。")
+            logger.success(f"LLM 回复: {resp.text[:80]}")
+            logger.info(f"token 用量: {resp.usage}")
+        except Exception as e:
+            logger.warning(f"LLM 联调失败（可能是密钥未配置）: {e}")
+    else:
+        logger.warning("LLM api_key 为空，跳过在线调用，仅验证实例化成功。")
 
     logger.success("框架初始化完成，等待后续任务挂入核心模块。")
     return 0
