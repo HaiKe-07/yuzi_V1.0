@@ -23,6 +23,7 @@ from core.personality import personality, PersonalityContext
 from speech import get_default_asr, get_default_tts
 from speech.player import is_available as player_available
 from speech.recorder import is_available as mic_available
+from core.conversation import ConversationManager, ConversationState
 
 
 def banner() -> str:
@@ -72,6 +73,10 @@ def main() -> int:
         f"播放环境可用: {player_available()} "
         f"（无 audio device 时只影响真实播放，不影响 TTS 模块加载）"
     )
+
+    # T1-06 自检：实例化对话管理器，串联 LLM+ASR+TTS
+    conv = ConversationManager(llm=llm, asr=asr, tts=tts)
+    logger.info(f"对话管理器就绪: {conv.status()}")
 
     if api_key:
         try:
