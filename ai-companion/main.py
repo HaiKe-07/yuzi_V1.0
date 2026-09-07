@@ -74,8 +74,10 @@ def main() -> int:
         f"（无 audio device 时只影响真实播放，不影响 TTS 模块加载）"
     )
 
-    # T1-06 自检：实例化对话管理器，串联 LLM+ASR+TTS
+    # T1-06/T1-07 自检：实例化对话管理器，串联 LLM+ASR+TTS+SQLite 持久化
     conv = ConversationManager(llm=llm, asr=asr, tts=tts)
+    # 从数据库恢复最近对话历史
+    conv.load_history()
     logger.info(f"对话管理器就绪: {conv.status()}")
 
     if api_key:

@@ -28,6 +28,8 @@ from utils.logger import logger
 
 from llm import LLMResponse, Message, get_default_llm
 from core.personality import PersonalityContext, personality
+from core.memory import db as db_module
+from core.memory.db import Database, ConversationRecord
 from speech import (
     ASRResult, BaseASR, BaseTTS, TTSResult,
     get_default_asr, get_default_tts,
@@ -64,12 +66,24 @@ class ConversationManager:
         tts: BaseTTS | None = None,
         personality_engine=None,
         max_turns: int | None = None,
+        db: Database | None = None,
+        persist: bool = True,
     ):
         # 默认使用全局单例，便于测试时注入 mock
         self.llm = llm or get_default_llm()
         self.asr = asr or get_default_asr()
         self.tts = tts or get_default_tts()
         self.personality = personality_engine or personality
+
+        # 持久化：默认开启，注入 None 可关闭（用于纯内存测试）
+        self._db = db if db is not None else db_module
+        self._persist = persist
+        if self._persist:
+            try:
+                self._db.init()
+            except Exception as e:
+                logger.warning(f"数据库初始化失败，关闭持久化: {e}")
+                self._persist = False
 
         # 短期记忆：保留最近 N 轮（user+assistant 各算 1 轮）
         max_turns = max_turns or config.get("memory.short_term_turns", 20)
@@ -89,7 +103,8 @@ class ConversationManager:
 
         logger.info(
             f"ConversationManager 初始化 max_turns={max_turns} "
-            f"llm={self.llm!r} asr={self.asr!r} tts={self.tts!r}"
+            f"llm={self.llm!r} asr={self.asr!r} tts={self.tts!r} "
+            f"persist={self._persist}"
         )
 
     # ============================================================
@@ -141,6 +156,27 @@ class ConversationManager:
         self._history.append(ConversationTurn(
             role=role, content=content, metadata=meta,
         ))
+        # 持久化到 SQLite
+        if self._persist:
+            try:
+                self._db.add_conversation(
+                    role=role,
+                    content=content,
+                    emotion=meta.get("emotion"),
+                    emotion_intensity=meta.get("emotion_intensity"),
+                    intimacy_score=meta.get("intimacy_score"),
+                    ai_emotion=meta.get("ai_emotion"),
+                    usage=meta.get("usage"),
+                    metadata={
+                        k: v for k, v in meta.items()
+                        if k not in (
+                            "emotion", "emotion_intensity",
+                            "intimacy_score", "ai_emotion", "usage",
+                        )
+                    },
+                )
+            except Exception as e:
+                logger.warning(f"对话持久化失败（不影响对话流程）: {e}")
 
     def _to_llm_messages(self) -> list[Message]:
         """把短期记忆转为 LLM 输入格式。"""
@@ -152,6 +188,37 @@ class ConversationManager:
     def clear_history(self) -> None:
         self._history.clear()
         logger.info("短期记忆已清空")
+
+    def load_history(self, limit: int | None = None) -> int:
+        """从数据库恢复短期记忆。
+
+        启动时调用，把最近 N 条对话填回短期记忆缓冲区。
+        Args:
+            limit: 取多少条，None 用 max_turns*2
+        Returns:
+            实际加载条数
+        """
+        if not self._persist:
+            return 0
+        n = limit or (self._max_turns * 2)
+        try:
+            records = self._db.get_recent_conversations(limit=n)
+        except Exception as e:
+            logger.warning(f"加载历史失败: {e}")
+            return 0
+        self._history.clear()
+        for r in records:
+            self._history.append(ConversationTurn(
+                role=r.role, content=r.content,
+                metadata={
+                    "id": r.id, "timestamp": r.timestamp,
+                    "emotion": r.emotion, "ai_emotion": r.ai_emotion,
+                    "intimacy_score": r.intimacy_score,
+                    "usage": r.usage,
+                },
+            ))
+        logger.info(f"已从数据库恢复 {len(records)} 条对话历史")
+        return len(records)
 
     # ============================================================
     # 对话循环

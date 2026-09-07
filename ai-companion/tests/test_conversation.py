@@ -46,12 +46,17 @@ def make_mock_tts(audio=b"FAKE_AUDIO"):
 
 
 def make_manager(max_turns=3, **kwargs):
-    """构造一个不依赖真实 LLM/ASR/TTS 的 manager。"""
+    """构造一个不依赖真实 LLM/ASR/TTS 的 manager。
+
+    默认关闭持久化，避免污染项目数据库；测试需要持久化时显式传 db + persist=True。
+    """
     return ConversationManager(
         llm=kwargs.get("llm", make_mock_llm()),
         asr=kwargs.get("asr", make_mock_asr()),
         tts=kwargs.get("tts", make_mock_tts()),
         max_turns=max_turns,
+        db=kwargs.get("db"),
+        persist=kwargs.get("persist", False),
     )
 
 
@@ -201,6 +206,45 @@ def test_clear_history():
     print("  [✓] clear_history 重置短期记忆")
 
 
+def test_persist_and_load_history():
+    """T1-07：对话自动持久化 + 重启后 load_history 恢复。"""
+    import tempfile
+    from core.memory.db import Database
+    with tempfile.TemporaryDirectory() as tmp:
+        # 用临时 db 文件，避免污染项目数据
+        db = Database(db_path=Path(tmp) / "test_conv.db")
+        m = make_manager(db=db, persist=True)
+        m.text_chat("你好")
+        m.text_chat("今天累不累？")
+        # 短期记忆 4 条
+        assert len(m.history) == 4
+
+        # 关掉 db 连接模拟重启
+        db.close()
+
+        # 新建 manager 同路径，load_history 应恢复 4 条
+        db2 = Database(db_path=Path(tmp) / "test_conv.db")
+        m2 = make_manager(db=db2, persist=True)
+        n = m2.load_history()
+        assert n == 4, f"应恢复 4 条，实际 {n}"
+        assert m2.history[0].content == "你好"
+        assert m2.history[1].content == "嗯，我在听呢"
+        assert m2.history[2].content == "今天累不累？"
+        print("  [✓] 对话自动持久化 + load_history 重启恢复")
+
+
+def test_persist_failure_does_not_break_chat():
+    """数据库不可用时对话流程不应中断。"""
+    m = make_manager()
+    # 故意把 db 调用搞坏
+    m._db = MagicMock()
+    m._db.add_conversation.side_effect = RuntimeError("DB 挂了")
+    # 对话应照常进行
+    reply = m.text_chat("你好")
+    assert reply == "嗯，我在听呢"
+    print("  [✓] DB 异常不影响对话流程")
+
+
 def test_status():
     m = make_manager()
     s = m.status()
@@ -222,6 +266,8 @@ def main() -> int:
     test_voice_chat_full_chain()
     test_voice_chat_empty_asr_skips_llm()
     test_clear_history()
+    test_persist_and_load_history()
+    test_persist_failure_does_not_break_chat()
     test_status()
     print("\n全部通过 ✅")
     return 0
