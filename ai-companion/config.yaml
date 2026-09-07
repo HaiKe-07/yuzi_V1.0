@@ -32,11 +32,20 @@ llm:
 
 # 语音识别 ASR
 asr:
-  # provider: cloud_xfyun / local_funasr
-  provider: "cloud_xfyun"
+  # provider: cloud_openai_whisper / cloud_xfyun / local_funasr
+  # 第一阶段默认用 Whisper（与 LLM 复用 openai 包，最简单）
+  # 讯飞流式 ASR 实现待补全（见 speech/xfyun_asr.py）
+  provider: "cloud_openai_whisper"
   sample_rate: 16000
   channels: 1
   chunk_duration_ms: 300
+  openai:
+    # 不填则尝试复用 llm.deepseek.api_key（多数中转服务兼容）
+    api_key: "${OPENAI_API_KEY}"
+    base_url: ""                # 留空走 OpenAI 官方；可填兼容服务 URL
+    model: "whisper-1"
+    language: "zh"
+    timeout: 30
   xfyun:
     app_id: "${XFYUN_APP_ID}"
     api_key: "${XFYUN_API_KEY}"

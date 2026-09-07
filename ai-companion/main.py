@@ -20,6 +20,8 @@ from utils.config import config
 from utils.logger import logger
 from llm import get_default_llm, Message
 from core.personality import personality, PersonalityContext
+from speech import get_default_asr
+from speech.recorder import is_available as mic_available
 
 
 def banner() -> str:
@@ -53,6 +55,14 @@ def main() -> int:
     # T1-03 自检：用基础人格 prompt 生成 system_prompt
     sys_prompt = personality.build_system_prompt()
     logger.info(f"人格 prompt 已生成 长度={len(sys_prompt)}")
+
+    # T1-04 自检：实例化 ASR 适配器并验证抽象接口可用
+    asr = get_default_asr()
+    logger.info(f"ASR 适配器就绪: {asr!r}")
+    logger.info(
+        f"录音环境可用: {mic_available()} "
+        f"（无 sounddevice/PortAudio 时只影响真实录音，不影响 ASR 模块加载）"
+    )
 
     if api_key:
         try:
