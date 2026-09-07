@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 from utils.config import config
 from utils.logger import logger
 from llm import get_default_llm, Message
+from core.personality import personality, PersonalityContext
 
 
 def banner() -> str:
@@ -48,16 +49,23 @@ def main() -> int:
     llm = get_default_llm()
     logger.info(f"LLM 适配器就绪: {llm!r}")
     api_key = getattr(llm, "api_key", "")
+
+    # T1-03 自检：用基础人格 prompt 生成 system_prompt
+    sys_prompt = personality.build_system_prompt()
+    logger.info(f"人格 prompt 已生成 长度={len(sys_prompt)}")
+
     if api_key:
         try:
             msgs = [Message(role="user", content="你好，请用一句话自我介绍。")]
-            resp = llm.chat(msgs, system_prompt="你是一位温柔体贴的 AI 陪伴助手。")
-            logger.success(f"LLM 回复: {resp.text[:80]}")
+            resp = llm.chat(msgs, system_prompt=sys_prompt)
+            logger.success(f"LLM 回复（带人格）: {resp.text[:80]}")
             logger.info(f"token 用量: {resp.usage}")
         except Exception as e:
             logger.warning(f"LLM 联调失败（可能是密钥未配置）: {e}")
     else:
-        logger.warning("LLM api_key 为空，跳过在线调用，仅验证实例化成功。")
+        logger.warning("LLM api_key 为空，跳过在线调用，仅验证人格 prompt 已生成。")
+        # 打印 prompt 头部预览，确认无残留占位符
+        logger.info(f"prompt 预览:\n{personality.preview()[:200]}")
 
     logger.success("框架初始化完成，等待后续任务挂入核心模块。")
     return 0
