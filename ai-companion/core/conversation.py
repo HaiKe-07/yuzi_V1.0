@@ -266,13 +266,17 @@ class ConversationManager:
 
         self._set_state(ConversationState.THINKING)
 
-        # ---- T2-01 情绪检测与 AI 情绪更新 ----
+        # ---- T2-01/T2-02 情绪检测与 AI 情绪更新 ----
         user_emo_label = None
         user_emo_intensity = None
         ai_emo_label = None
         if self.emotion is not None:
             try:
                 from core.emotion import detect_emotion
+                # T2-02: 先应用时段影响 + 沉默累积（基于 last_interaction_at）
+                self.emotion.update_from_time_context()
+                self.emotion.update_from_silence()
+                # T2-01: 用户情绪共鸣
                 user_emotion = detect_emotion(user_text)
                 # 用户情绪非中性时才更新 AI 情绪（避免中性把 AI 拉平）
                 if user_emotion.primary.value != "中性":

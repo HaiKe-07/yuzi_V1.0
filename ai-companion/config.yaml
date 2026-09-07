@@ -96,6 +96,15 @@ emotion:
   empathy_weight: 0.4      # 共鸣权重 0~1：AI 情绪受用户情绪影响程度
   decay_rate: 0.05         # 衰减率：每秒向基线回归比例（越小越持久）
   inertia_factor: 0.5      # 情绪惯性 0~1：当前越强烈越抗拒改变（状态机粘性）
+  # 关系维度基线（T2-02，0~1）
+  baseline_affection: 0.3    # 对用户的亲近感基线
+  baseline_loneliness: 0.1   # 孤独感基线
+  baseline_concern: 0.1      # 担忧基线
+  baseline_playfulness: 0.2  # 调皮/趣味性基线
+  # 沉默累积（T2-02）：每秒 loneliness 上升量，默认 6 小时累积到 0.5
+  silence_loneliness_rate: 0.0000231  # ≈ 0.5 / 21600
+  # 亲密度调节初始值（T2-03 接入后由亲密度系统更新）
+  intimacy_score: 5.0
 
 # 亲密度系统
 intimacy:

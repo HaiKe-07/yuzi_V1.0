@@ -455,10 +455,275 @@ def test_conversation_without_emotion_still_works():
 
 
 # ============================================================
+# 6. T2-02 关系维度 + 时间/沉默/亲密度影响
+# ============================================================
+def test_ai_emotion_relation_dimensions_init():
+    """AIEmotionState 应包含 4 个关系维度，且有合理基线。"""
+    e = make_engine()
+    s = e.state
+    assert hasattr(s, "affection")
+    assert hasattr(s, "loneliness")
+    assert hasattr(s, "concern")
+    assert hasattr(s, "playfulness")
+    assert 0.0 <= s.affection <= 1.0
+    assert 0.0 <= s.loneliness <= 1.0
+    print(f"  [✓] 关系维度初始化 aff={s.affection} lone={s.loneliness} "
+          f"con={s.concern} play={s.playfulness}")
+
+
+def test_ai_emotion_state_serialization_with_relation():
+    """to_dict/from_dict 应正确序列化关系维度。"""
+    e = make_engine()
+    e.state.affection = 0.6
+    e.state.loneliness = 0.4
+    e.state.concern = 0.5
+    e.state.playfulness = 0.7
+    d = e.state.to_dict()
+    assert d["affection"] == 0.6
+    assert d["loneliness"] == 0.4
+    assert d["concern"] == 0.5
+    assert d["playfulness"] == 0.7
+    # 反序列化
+    s2 = AIEmotionState.from_dict(d)
+    assert s2.affection == 0.6
+    assert s2.loneliness == 0.4
+    assert s2.concern == 0.5
+    assert s2.playfulness == 0.7
+    print("  [✓] 关系维度序列化/反序列化")
+
+
+def test_user_sad_raises_concern():
+    """用户难过 → AI concern 上升。"""
+    e = make_engine(empathy_weight=0.5)
+    before = e.state.concern
+    e.update_from_user_emotion(EmotionState(
+        primary=EmotionType.SAD, intensity=4.0,
+    ))
+    after = e.state.concern
+    assert after > before, f"用户难过应提升 concern, {before}→{after}"
+    print(f"  [✓] 用户难过 concern {before:.2f}→{after:.2f}")
+
+
+def test_user_affectionate_raises_affection():
+    """用户亲昵 → AI affection 上升。"""
+    e = make_engine(empathy_weight=0.5)
+    before = e.state.affection
+    e.update_from_user_emotion(EmotionState(
+        primary=EmotionType.AFFECTIONATE, intensity=4.0,
+    ))
+    after = e.state.affection
+    assert after > before, f"用户亲昵应提升 affection, {before}→{after}"
+    print(f"  [✓] 用户亲昵 affection {before:.2f}→{after:.2f}")
+
+
+def test_user_happy_raises_playfulness():
+    """用户开心 → AI playfulness 小幅上升。"""
+    e = make_engine(empathy_weight=0.5)
+    before = e.state.playfulness
+    e.update_from_user_emotion(EmotionState(
+        primary=EmotionType.HAPPY, intensity=4.0,
+    ))
+    after = e.state.playfulness
+    assert after > before, f"用户开心应提升 playfulness, {before}→{after}"
+    print(f"  [✓] 用户开心 playfulness {before:.2f}→{after:.2f}")
+
+
+def test_interaction_reduces_loneliness():
+    """任何用户互动 → loneliness 下降。"""
+    e = make_engine()
+    # 先拉高 loneliness
+    e.state.loneliness = 0.6
+    e.update_from_user_emotion(EmotionState(
+        primary=EmotionType.NEUTRAL, intensity=3.0,
+    ))
+    # 中性不进入 update_from_user_emotion 的关系维度联动（实际由 ConversationManager 跳过）
+    # 但 update_from_content 也会降低 loneliness
+    e.update_from_content("你好呀")
+    assert e.state.loneliness < 0.6, "互动应降低 loneliness"
+    print(f"  [✓] 互动降低 loneliness → {e.state.loneliness:.2f}")
+
+
+def test_content_praise_raises_affection():
+    """被夸 → affection 上升。"""
+    e = make_engine()
+    before = e.state.affection
+    e.update_from_content("你真厉害，谢谢你")
+    after = e.state.affection
+    assert after > before, "被夸应提升 affection"
+    print(f"  [✓] 被夸 affection {before:.2f}→{after:.2f}")
+
+
+def test_content_insult_lowers_affection():
+    """被骂 → affection 下降。"""
+    e = make_engine()
+    e.state.affection = 0.5  # 先拉高便于观察下降
+    before = e.state.affection
+    e.update_from_content("你真笨，讨厌你")
+    after = e.state.affection
+    assert after < before, "被骂应降低 affection"
+    print(f"  [✓] 被骂 affection {before:.2f}→{after:.2f}")
+
+
+def test_time_context_morning_vs_night():
+    """早晨 vs 深夜：arousal 应有差异。"""
+    e_morning = make_engine()
+    e_morning.update_from_time_context(hour=8)  # 早晨
+
+    e_night = make_engine()
+    e_night.update_from_time_context(hour=23)  # 深夜
+
+    # 早晨 arousal 应高于深夜
+    assert e_morning.state.pad.arousal > e_night.state.pad.arousal, (
+        f"早晨 arousal={e_morning.state.pad.arousal} 应高于 "
+        f"深夜 arousal={e_night.state.pad.arousal}"
+    )
+    print(f"  [✓] 时段影响 早晨 arousal={e_morning.state.pad.arousal:.2f} "
+          f"> 深夜 arousal={e_night.state.pad.arousal:.2f}")
+
+
+def test_silence_accumulates_loneliness():
+    """长时间沉默 → loneliness 上升。"""
+    e = make_engine()
+    # 加速测试：手动调高累积速率（1 小时累积 0.5）
+    e.silence_loneliness_rate = 0.5 / 3600.0
+    before = e.state.loneliness
+    e.update_from_silence(silence_seconds=3600.0)  # 1 小时
+    after = e.state.loneliness
+    assert after > before, "沉默应累积 loneliness"
+    print(f"  [✓] 沉默累积 loneliness {before:.2f}→{after:.2f}")
+
+
+def test_silence_over_hour_lowers_affection():
+    """沉默超 1 小时 → affection 下降。"""
+    e = make_engine()
+    e.state.affection = 0.5
+    before = e.state.affection
+    e.update_from_silence(silence_seconds=7200.0)  # 2 小时
+    after = e.state.affection
+    assert after < before, "长时间沉默应降低 affection"
+    print(f"  [✓] 长时间沉默 affection {before:.2f}→{after:.2f}")
+
+
+def test_short_silence_no_effect():
+    """短时间沉默（<1 分钟）不应触发累积。"""
+    e = make_engine()
+    before = e.state.loneliness
+    e.update_from_silence(silence_seconds=30.0)
+    assert e.state.loneliness == before, "30 秒沉默不应累积 loneliness"
+    print("  [✓] 短时间沉默不触发累积")
+
+
+def test_intimacy_modulates_empathy():
+    """亲密度高时共鸣更强：同样用户开心，高亲密度 AI pleasure 提升更多。"""
+    # 低亲密度（0）
+    e_low = make_engine(empathy_weight=0.4)
+    e_low.set_intimacy_score(0.0)
+    e_low.update_from_user_emotion(EmotionState(
+        primary=EmotionType.HAPPY, intensity=5.0,
+    ))
+    low_p = e_low.state.pad.pleasure
+
+    # 高亲密度（100）
+    e_high = make_engine(empathy_weight=0.4)
+    e_high.set_intimacy_score(100.0)
+    e_high.update_from_user_emotion(EmotionState(
+        primary=EmotionType.HAPPY, intensity=5.0,
+    ))
+    high_p = e_high.state.pad.pleasure
+
+    assert high_p > low_p, (
+        f"高亲密度 pleasure={high_p} 应高于低亲密度 pleasure={low_p}"
+    )
+    print(f"  [✓] 亲密度调节 低亲密度 pleasure={low_p:.2f} "
+          f"< 高亲密度 pleasure={high_p:.2f}")
+
+
+def test_empathy_multiplier_range():
+    """_empathy_multiplier 应在 0.5~1.5 之间。"""
+    e = make_engine()
+    e.set_intimacy_score(0.0)
+    assert abs(e._empathy_multiplier() - 0.5) < 0.01
+    e.set_intimacy_score(50.0)
+    assert abs(e._empathy_multiplier() - 1.0) < 0.01
+    e.set_intimacy_score(100.0)
+    assert abs(e._empathy_multiplier() - 1.5) < 0.01
+    print("  [✓] empathy_multiplier 0→0.5, 50→1.0, 100→1.5")
+
+
+def test_decay_returns_relation_to_baseline():
+    """衰减后关系维度也回归基线。"""
+    e = make_engine(decay_rate=0.5)
+    e.state.affection = 0.9
+    e.state.loneliness = 0.8
+    e.state.concern = 0.7
+    e.state.playfulness = 0.9
+    # 衰减 100 秒
+    e.decay(dt_seconds=100.0)
+    # 关系维度应向基线回归
+    assert e.state.affection < 0.9
+    assert e.state.concern < 0.7
+    assert e.state.playfulness < 0.9
+    print(f"  [✓] 衰减后关系维度回归 aff={e.state.affection:.2f} "
+          f"con={e.state.concern:.2f}")
+
+
+def test_emotion_context_includes_relation():
+    """emotion_context 应包含关系维度字段。"""
+    e = make_engine()
+    e.state.affection = 0.7
+    ctx = e.emotion_context()
+    assert "affection" in ctx
+    assert "loneliness" in ctx
+    assert "concern" in ctx
+    assert "playfulness" in ctx
+    assert ctx["affection"] == 0.7
+    # 高 affection 时 prompt_hint 应含"亲近"
+    assert "亲近" in ctx["prompt_hint"]
+    print(f"  [✓] emotion_context 含关系维度 hint={ctx['prompt_hint'][:40]}")
+
+
+def test_reset_resets_relation_dimensions():
+    """reset 应重置关系维度到基线。"""
+    e = make_engine()
+    e.state.affection = 0.9
+    e.state.loneliness = 0.8
+    e.state.concern = 0.7
+    e.reset()
+    assert abs(e.state.affection - e.baseline_affection) < 0.01
+    assert abs(e.state.loneliness - e.baseline_loneliness) < 0.01
+    assert abs(e.state.concern - e.baseline_concern) < 0.01
+    print("  [✓] reset 重置关系维度到基线")
+
+
+def test_persistence_preserves_relation_dimensions():
+    """持久化应保存关系维度，重启后恢复。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        from core.memory.db import Database
+        Database.reload(db_path=Path(tmp) / "test_rel.db")
+        db = Database.get_instance()
+        db.init()
+
+        e1 = AIEmotionEngine(persistence=True, empathy_weight=0.5)
+        e1.update_from_user_emotion(EmotionState(
+            primary=EmotionType.AFFECTIONATE, intensity=5.0,
+        ))
+        saved_aff = e1.state.affection
+        print(f"  保存 affection={saved_aff:.3f}")
+
+        e2 = AIEmotionEngine(persistence=True)
+        restored_aff = e2.state.affection
+        print(f"  恢复 affection={restored_aff:.3f}")
+        assert abs(restored_aff - saved_aff) < 0.05, "affection 应跨重启恢复"
+        print(f"  [✓] 持久化恢复 affection={restored_aff:.3f}")
+
+        db.close()
+
+
+# ============================================================
 # main
 # ============================================================
 def main() -> int:
-    print("T2-01 情绪系统单元测试\n")
+    print("T2-01/T2-02 情绪系统单元测试\n")
 
     print("【1】情绪类型与 PAD 向量")
     test_emotion_types_count()
@@ -495,6 +760,26 @@ def main() -> int:
     test_conversation_prompt_has_emotion_hint()
     test_conversation_emotion_metadata_saved()
     test_conversation_without_emotion_still_works()
+
+    print("\n【6】T2-02 关系维度 + 时间/沉默/亲密度影响")
+    test_ai_emotion_relation_dimensions_init()
+    test_ai_emotion_state_serialization_with_relation()
+    test_user_sad_raises_concern()
+    test_user_affectionate_raises_affection()
+    test_user_happy_raises_playfulness()
+    test_interaction_reduces_loneliness()
+    test_content_praise_raises_affection()
+    test_content_insult_lowers_affection()
+    test_time_context_morning_vs_night()
+    test_silence_accumulates_loneliness()
+    test_silence_over_hour_lowers_affection()
+    test_short_silence_no_effect()
+    test_intimacy_modulates_empathy()
+    test_empathy_multiplier_range()
+    test_decay_returns_relation_to_baseline()
+    test_emotion_context_includes_relation()
+    test_reset_resets_relation_dimensions()
+    test_persistence_preserves_relation_dimensions()
 
     print("\n全部通过 ✅")
     return 0
