@@ -130,3 +130,8 @@ tools:
     enabled: false
     api: "qweather"
     api_key: "${QWEATHER_API_KEY}"
+
+# 本地 HTTP API（供 Electron 前端调用）
+server:
+  host: "127.0.0.1"
+  port: 18731

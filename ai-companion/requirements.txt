@@ -21,9 +21,11 @@ numpy>=1.26.0
 # ChromaDB 在第二阶段（长期记忆）启用：
 # chromadb>=0.5.0
 
-# --- 桌面 UI（第一阶段可暂不启用） ---
-# PyQt5>=5.15.10
-# 或使用 Electron + Vue，不依赖 Python 端 UI 库
+# --- 桌面 UI（Electron + Vue，前端在 ui/ 目录） ---
+# Python 端只负责暴露本地 HTTP API 给前端调用
+fastapi>=0.110.0
+uvicorn>=0.27.0
+pydantic>=2.6.0         # FastAPI 请求校验
 
 # --- 工具（按阶段启用） ---
 # requests>=2.31.0      # 天气查询等 HTTP 调用

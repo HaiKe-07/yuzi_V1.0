@@ -83,6 +83,20 @@ class Config:
             node = node[part]
         return node
 
+    def set(self, dotted_key: str, value: Any) -> None:
+        """按点号路径设值（内存中，不落盘）。
+
+        用于运行时配置覆盖（如 settings 接口）。
+        若中间节点不存在会自动创建。
+        """
+        parts = dotted_key.split(".")
+        node: Any = self._data
+        for part in parts[:-1]:
+            if not isinstance(node.get(part), dict):
+                node[part] = {}
+            node = node[part]
+        node[parts[-1]] = value
+
     def all(self) -> dict:
         return self._data
 

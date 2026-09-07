@@ -93,6 +93,30 @@ def main() -> int:
         # 打印 prompt 头部预览，确认无残留占位符
         logger.info(f"prompt 预览:\n{personality.preview()[:200]}")
 
+    # T1-08 自检：FastAPI app 可创建 + 桌面端骨架文件齐全
+    try:
+        from server import create_app
+        app = create_app()
+        routes = {r.path for r in app.routes if hasattr(r, "path")}
+        expected = {"/api/health", "/api/status", "/api/chat", "/api/settings"}
+        assert expected <= routes, f"缺失路由: {expected - routes}"
+        logger.info(f"HTTP API 路由就绪: {sorted(routes)[:6]}...")
+    except Exception as e:
+        logger.error(f"HTTP API 初始化失败: {e}")
+        return 1
+
+    ui_dir = ROOT / "ui"
+    scaffold_files = [
+        "package.json", "electron/main.js", "electron/preload.js",
+        "src/App.vue", "src/components/ChatPanel.vue",
+        "src/components/SettingsPanel.vue",
+    ]
+    missing = [f for f in scaffold_files if not (ui_dir / f).exists()]
+    if missing:
+        logger.warning(f"桌面端骨架文件缺失: {missing}")
+    else:
+        logger.info(f"桌面端骨架就绪（{len(scaffold_files)} 文件 + Electron + Vue）")
+
     logger.success("框架初始化完成，等待后续任务挂入核心模块。")
     return 0
 
