@@ -48,14 +48,16 @@ def make_mock_tts(audio=b"FAKE_AUDIO"):
 def make_manager(max_turns=3, **kwargs):
     """构造一个不依赖真实 LLM/ASR/TTS 的 manager。
 
-    默认关闭持久化和情绪引擎，避免污染项目数据库/影响现有断言；
-    测试需要时显式传 db + persist=True 或 emotion_engine=<engine>。
+    默认关闭持久化、情绪引擎和亲密度管理器，避免污染项目数据库/影响现有断言；
+    测试需要时显式传 db + persist=True 或 emotion_engine=<engine>
+    或 intimacy_manager=<manager>。
     """
     return ConversationManager(
         llm=kwargs.get("llm", make_mock_llm()),
         asr=kwargs.get("asr", make_mock_asr()),
         tts=kwargs.get("tts", make_mock_tts()),
         emotion_engine=kwargs.get("emotion_engine", False),
+        intimacy_manager=kwargs.get("intimacy_manager", False),
         max_turns=max_turns,
         db=kwargs.get("db"),
         persist=kwargs.get("persist", False),

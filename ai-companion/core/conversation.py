@@ -81,6 +81,7 @@ class ConversationManager:
         tts: BaseTTS | None = None,
         personality_engine=None,
         emotion_engine=None,
+        intimacy_manager=None,
         max_turns: int | None = None,
         db: Database | None = None,
         persist: bool = True,
@@ -97,6 +98,17 @@ class ConversationManager:
             self.emotion = None
         else:
             self.emotion = emotion_engine or _maybe_create_emotion_engine()
+
+        # 亲密度管理器（T2-03）：默认懒加载，注入 False 可关闭
+        if intimacy_manager is False:
+            self.intimacy = None
+        else:
+            try:
+                from core.intimacy import get_intimacy_manager
+                self.intimacy = intimacy_manager or get_intimacy_manager()
+            except Exception as e:
+                logger.warning(f"亲密度管理器加载失败: {e}")
+                self.intimacy = None
 
         # 持久化：默认开启，注入 None 可关闭（用于纯内存测试）
         self._db = db if db is not None else db_module
@@ -122,15 +134,29 @@ class ConversationManager:
             "user_input": [],
             "ai_reply": [],
             "emotion": [],
+            "intimacy": [],
             "error": [],
         }
+
+        # 同步亲密度到情绪引擎（T2-02/T2-03 联动）
+        self._sync_intimacy_to_emotion()
 
         logger.info(
             f"ConversationManager 初始化 max_turns={max_turns} "
             f"llm={self.llm!r} asr={self.asr!r} tts={self.tts!r} "
             f"emotion={'on' if self.emotion else 'off'} "
+            f"intimacy={'on' if self.intimacy else 'off'} "
             f"persist={self._persist}"
         )
+
+    def _sync_intimacy_to_emotion(self) -> None:
+        """把当前亲密度分数同步到情绪引擎（调节共鸣强度）。"""
+        if self.emotion is None or self.intimacy is None:
+            return
+        try:
+            self.emotion.set_intimacy_score(self.intimacy.get_score())
+        except Exception as e:
+            logger.debug(f"亲密度同步到情绪失败: {e}")
 
     # ============================================================
     # 状态机
@@ -260,6 +286,12 @@ class ConversationManager:
         2. 用用户情绪 + 内容极性更新 AI 独立情绪
         3. 把 AI 情绪上下文注入 system_prompt
         4. 对话记录携带情绪标签，便于回放与训练
+
+        T2-03 起增加亲密度联动：
+        5. 每轮日常闲聊 +0.5（边际递减）
+        6. 检测伤害性话语 → on_hurt
+        7. 同步亲密度到情绪引擎（调节共鸣）
+        8. 亲密度上下文注入 system_prompt
         """
         if not user_text or not user_text.strip():
             return ""
@@ -294,11 +326,38 @@ class ConversationManager:
             except Exception as e:
                 logger.debug(f"情绪处理失败（不影响对话）: {e}")
 
+        # ---- T2-03 亲密度联动 ----
+        intimacy_ctx = None
+        if self.intimacy is not None:
+            try:
+                # 检测伤害性话语（强负面内容极性 → 触发 on_hurt）
+                polarity = self._infer_polarity_for_intimacy(user_text)
+                if polarity <= -0.5:
+                    # severity: 0~1，越负面越严重
+                    severity = min(1.0, abs(polarity))
+                    self.intimacy.on_hurt(severity=severity)
+                else:
+                    # 日常闲聊 +0.5
+                    self.intimacy.on_daily_chat()
+                # 同步亲密度到情绪引擎
+                self._sync_intimacy_to_emotion()
+                intimacy_ctx = self.intimacy.context()
+                self._emit(
+                    "intimacy",
+                    score=intimacy_ctx["score"],
+                    level=intimacy_ctx["level"],
+                )
+            except Exception as e:
+                logger.debug(f"亲密度处理失败（不影响对话）: {e}")
+
         self._emit("user_input", text=user_text, emotion=user_emo_label)
         self._add_turn(
             "user", user_text,
             emotion=user_emo_label,
             emotion_intensity=user_emo_intensity,
+            intimacy_score=(
+                self.intimacy.get_score() if self.intimacy else None
+            ),
         )
 
         try:
@@ -310,6 +369,9 @@ class ConversationManager:
                     sys_prompt = sys_prompt + "\n" + ctx["prompt_hint"]
                 except Exception as e:
                     logger.debug(f"情绪上下文注入失败: {e}")
+            # T2-03: 注入亲密度上下文（称呼风格提示）
+            if intimacy_ctx is not None:
+                sys_prompt = sys_prompt + "\n" + intimacy_ctx["prompt_hint"]
             resp = self.llm.chat(
                 self._to_llm_messages(),
                 system_prompt=sys_prompt,
@@ -328,6 +390,25 @@ class ConversationManager:
         self._emit("ai_reply", text=resp.text, ai_emotion=ai_emo_label)
         self._set_state(ConversationState.IDLE)
         return resp.text
+
+    def _infer_polarity_for_intimacy(self, text: str) -> float:
+        """推断用户话语对 AI 的友好度（用于亲密度伤害检测）。
+
+        复用 AIEmotionEngine 的极性推断逻辑；情绪引擎关闭时用简易规则。
+        """
+        if self.emotion is not None:
+            try:
+                return self.emotion._infer_polarity(text)
+            except Exception:
+                pass
+        # 简易回退：检测常见伤害词
+        hurt_words = ["讨厌", "滚", "烦死", "闭嘴", "笨", "恶心", "去死"]
+        pos_words = ["谢谢", "喜欢", "爱你", "想你"]
+        neg = sum(1 for w in hurt_words if w in text)
+        pos = sum(1 for w in pos_words if w in text)
+        if pos == neg:
+            return 0.0
+        return (pos - neg) / max(pos, neg)
 
     def speak(self, text: str) -> TTSResult:
         """把文本转为语音并播放。
@@ -408,6 +489,11 @@ class ConversationManager:
             "max_turns": self._max_turns,
             "emotion": "on" if self.emotion else "off",
             "ai_emotion": self.emotion.get_label() if self.emotion else None,
+            "intimacy": "on" if self.intimacy else "off",
+            "intimacy_score": self.intimacy.get_score() if self.intimacy else None,
+            "intimacy_level": (
+                self.intimacy.get_level().value if self.intimacy else None
+            ),
             "llm": repr(self.llm),
             "asr": repr(self.asr),
             "tts": repr(self.tts),

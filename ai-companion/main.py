@@ -141,6 +141,27 @@ def main() -> int:
         logger.error(f"情绪系统初始化失败: {e}")
         return 1
 
+    # T2-03 自检：五级亲密度系统
+    try:
+        from core.intimacy import IntimacyManager, IntimacyLevel
+        im = IntimacyManager(persistence=False)
+        assert im.get_level() == IntimacyLevel.STRANGER
+        # 模拟正向互动提升亲密度
+        im.on_user_fact_mentioned()
+        im.on_comfort_effective()
+        im.on_apology()
+        # 模拟伤害
+        im.on_hurt(severity=0.5)
+        assert im.get_score() >= 0.0
+        ctx = im.context()
+        logger.info(
+            f"亲密度系统就绪: score={ctx['score']} level={ctx['level']} "
+            f"recovery={ctx['recovery']} address_hint={ctx['address_hint'][:20]}"
+        )
+    except Exception as e:
+        logger.error(f"亲密度系统初始化失败: {e}")
+        return 1
+
     logger.success("框架初始化完成，等待后续任务挂入核心模块。")
     return 0
 
