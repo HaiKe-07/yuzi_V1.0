@@ -117,6 +117,25 @@ def main() -> int:
     else:
         logger.info(f"桌面端骨架就绪（{len(scaffold_files)} 文件 + Electron + Vue）")
 
+    # T2-01 自检：情绪系统（用户情绪检测 + AI 独立情绪 PAD 模型）
+    try:
+        from core.emotion import detect_emotion, AIEmotionEngine, EmotionType
+        # 用户情绪检测
+        u_emo = detect_emotion("我今天好开心")
+        assert u_emo.primary == EmotionType.HAPPY
+        logger.info(f"用户情绪检测就绪: '我今天好开心' → {u_emo.primary.value}")
+        # AI 情绪引擎（共鸣 + 衰减 + 惯性）
+        ai_eng = AIEmotionEngine(persistence=False)
+        ai_eng.update_from_user_emotion(u_emo)
+        ctx = ai_eng.emotion_context()
+        logger.info(
+            f"AI 情绪引擎就绪: 当前={ctx['label']} intensity={ctx['intensity']} "
+            f"empathy={ai_eng.empathy_weight} inertia={ai_eng.inertia_factor}"
+        )
+    except Exception as e:
+        logger.error(f"情绪系统初始化失败: {e}")
+        return 1
+
     logger.success("框架初始化完成，等待后续任务挂入核心模块。")
     return 0
 

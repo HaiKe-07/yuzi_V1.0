@@ -39,6 +39,21 @@ from speech import (
 EventCallback = Callable[..., Any]
 
 
+def _maybe_create_emotion_engine():
+    """按配置懒加载 AI 情绪引擎。
+
+    config.emotion.ai_emotion_enabled = false 或加载失败时返回 None。
+    """
+    if not config.get("emotion.ai_emotion_enabled", True):
+        return None
+    try:
+        from core.emotion import AIEmotionEngine
+        return AIEmotionEngine(persistence=config.get("emotion.ai_emotion_enabled", True) is not False)
+    except Exception as e:
+        logger.warning(f"AI 情绪引擎加载失败（对话继续，无情绪能力）: {e}")
+        return None
+
+
 class ConversationState(str, Enum):
     """对话状态机。"""
     IDLE = "idle"           # 待机
@@ -65,6 +80,7 @@ class ConversationManager:
         asr: BaseASR | None = None,
         tts: BaseTTS | None = None,
         personality_engine=None,
+        emotion_engine=None,
         max_turns: int | None = None,
         db: Database | None = None,
         persist: bool = True,
@@ -74,6 +90,13 @@ class ConversationManager:
         self.asr = asr or get_default_asr()
         self.tts = tts or get_default_tts()
         self.personality = personality_engine or personality
+
+        # 情绪引擎：默认懒加载，注入 None 可关闭（纯文本测试）
+        # 传入 False 显式禁用；传入对象则直接使用
+        if emotion_engine is False:
+            self.emotion = None
+        else:
+            self.emotion = emotion_engine or _maybe_create_emotion_engine()
 
         # 持久化：默认开启，注入 None 可关闭（用于纯内存测试）
         self._db = db if db is not None else db_module
@@ -98,12 +121,14 @@ class ConversationManager:
             "state_change": [],
             "user_input": [],
             "ai_reply": [],
+            "emotion": [],
             "error": [],
         }
 
         logger.info(
             f"ConversationManager 初始化 max_turns={max_turns} "
             f"llm={self.llm!r} asr={self.asr!r} tts={self.tts!r} "
+            f"emotion={'on' if self.emotion else 'off'} "
             f"persist={self._persist}"
         )
 
@@ -129,10 +154,11 @@ class ConversationManager:
         """注册事件回调。
 
         事件：
-        - state_change(old, new): 状态变更
-        - user_input(text):        用户输入（文本或 ASR 结果）
-        - ai_reply(text):          AI 回复文本
-        - error(exception):        发生异常
+        - state_change(old, new):           状态变更
+        - user_input(text, emotion=None):   用户输入（含检测到的情绪）
+        - ai_reply(text, ai_emotion=None):  AI 回复（含 AI 当前情绪）
+        - emotion(user_emotion, ai_emotion):情绪更新（T2-01）
+        - error(exception):                 发生异常
         """
         if event not in self._hooks:
             raise ValueError(f"未知事件: {event!r}")
@@ -228,16 +254,58 @@ class ConversationManager:
 
         不调用 TTS/ASR，便于测试与纯文本场景。
         TTS 通过 speak() 单独触发。
+
+        T2-01 起在每轮对话中：
+        1. 检测用户情绪（关键词规则）
+        2. 用用户情绪 + 内容极性更新 AI 独立情绪
+        3. 把 AI 情绪上下文注入 system_prompt
+        4. 对话记录携带情绪标签，便于回放与训练
         """
         if not user_text or not user_text.strip():
             return ""
 
         self._set_state(ConversationState.THINKING)
-        self._emit("user_input", text=user_text)
-        self._add_turn("user", user_text)
+
+        # ---- T2-01 情绪检测与 AI 情绪更新 ----
+        user_emo_label = None
+        user_emo_intensity = None
+        ai_emo_label = None
+        if self.emotion is not None:
+            try:
+                from core.emotion import detect_emotion
+                user_emotion = detect_emotion(user_text)
+                # 用户情绪非中性时才更新 AI 情绪（避免中性把 AI 拉平）
+                if user_emotion.primary.value != "中性":
+                    self.emotion.update_from_user_emotion(user_emotion)
+                # 内容极性影响（被夸/被骂）
+                self.emotion.update_from_content(user_text)
+                user_emo_label = user_emotion.primary.value
+                user_emo_intensity = round(user_emotion.intensity, 2)
+                ai_emo_label = self.emotion.get_label()
+                self._emit(
+                    "emotion",
+                    user_emotion=user_emo_label,
+                    ai_emotion=ai_emo_label,
+                )
+            except Exception as e:
+                logger.debug(f"情绪处理失败（不影响对话）: {e}")
+
+        self._emit("user_input", text=user_text, emotion=user_emo_label)
+        self._add_turn(
+            "user", user_text,
+            emotion=user_emo_label,
+            emotion_intensity=user_emo_intensity,
+        )
 
         try:
             sys_prompt = self.personality.build_system_prompt()
+            # 注入 AI 当前情绪上下文
+            if self.emotion is not None and ai_emo_label:
+                try:
+                    ctx = self.emotion.emotion_context()
+                    sys_prompt = sys_prompt + "\n" + ctx["prompt_hint"]
+                except Exception as e:
+                    logger.debug(f"情绪上下文注入失败: {e}")
             resp = self.llm.chat(
                 self._to_llm_messages(),
                 system_prompt=sys_prompt,
@@ -251,8 +319,9 @@ class ConversationManager:
         self._add_turn(
             "assistant", resp.text,
             usage=resp.usage, finish_reason=resp.finish_reason,
+            ai_emotion=ai_emo_label,
         )
-        self._emit("ai_reply", text=resp.text)
+        self._emit("ai_reply", text=resp.text, ai_emotion=ai_emo_label)
         self._set_state(ConversationState.IDLE)
         return resp.text
 
@@ -333,6 +402,8 @@ class ConversationManager:
             "state": self._state.value,
             "history_len": len(self._history),
             "max_turns": self._max_turns,
+            "emotion": "on" if self.emotion else "off",
+            "ai_emotion": self.emotion.get_label() if self.emotion else None,
             "llm": repr(self.llm),
             "asr": repr(self.asr),
             "tts": repr(self.tts),

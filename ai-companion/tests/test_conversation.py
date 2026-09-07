@@ -48,12 +48,14 @@ def make_mock_tts(audio=b"FAKE_AUDIO"):
 def make_manager(max_turns=3, **kwargs):
     """构造一个不依赖真实 LLM/ASR/TTS 的 manager。
 
-    默认关闭持久化，避免污染项目数据库；测试需要持久化时显式传 db + persist=True。
+    默认关闭持久化和情绪引擎，避免污染项目数据库/影响现有断言；
+    测试需要时显式传 db + persist=True 或 emotion_engine=<engine>。
     """
     return ConversationManager(
         llm=kwargs.get("llm", make_mock_llm()),
         asr=kwargs.get("asr", make_mock_asr()),
         tts=kwargs.get("tts", make_mock_tts()),
+        emotion_engine=kwargs.get("emotion_engine", False),
         max_turns=max_turns,
         db=kwargs.get("db"),
         persist=kwargs.get("persist", False),
@@ -125,8 +127,9 @@ def test_personality_prompt_injected():
 def test_event_hooks_fire_in_order():
     m = make_manager()
     events = []
-    m.on("user_input", lambda text: events.append(("user", text)))
-    m.on("ai_reply", lambda text: events.append(("ai", text)))
+    # 回调用 **kw 接收情绪等新参数，兼容 T2-01 事件扩展
+    m.on("user_input", lambda text, **kw: events.append(("user", text)))
+    m.on("ai_reply", lambda text, **kw: events.append(("ai", text)))
     m.on("state_change", lambda old, new: events.append(("state", new.value)))
 
     m.text_chat("你好")

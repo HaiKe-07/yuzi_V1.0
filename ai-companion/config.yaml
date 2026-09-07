@@ -89,6 +89,13 @@ emotion:
   decay_interval_sec: 600  # 情绪自然衰减间隔
   user_emotion_model: "llm" # llm / acoustic
   ai_emotion_enabled: true
+  # AI 独立情绪（PAD 模型）参数
+  baseline_pleasure: 0.3   # 基线愉悦度 -1~1（温柔陪伴者偏愉悦）
+  baseline_arousal: -0.2   # 基线唤醒度 -1~1（偏平静）
+  baseline_dominance: 0.1  # 基线支配度 -1~1（略主导）
+  empathy_weight: 0.4      # 共鸣权重 0~1：AI 情绪受用户情绪影响程度
+  decay_rate: 0.05         # 衰减率：每秒向基线回归比例（越小越持久）
+  inertia_factor: 0.5      # 情绪惯性 0~1：当前越强烈越抗拒改变（状态机粘性）
 
 # 亲密度系统
 intimacy:
