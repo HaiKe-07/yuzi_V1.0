@@ -82,6 +82,7 @@ class ConversationManager:
         personality_engine=None,
         emotion_engine=None,
         intimacy_manager=None,
+        memory_manager=None,
         max_turns: int | None = None,
         db: Database | None = None,
         persist: bool = True,
@@ -109,6 +110,17 @@ class ConversationManager:
             except Exception as e:
                 logger.warning(f"亲密度管理器加载失败: {e}")
                 self.intimacy = None
+
+        # 长期记忆管理器（T2-05）：默认懒加载，注入 False 可关闭
+        if memory_manager is False:
+            self.memory = None
+        else:
+            try:
+                from core.memory.manager import get_memory_manager
+                self.memory = memory_manager or get_memory_manager()
+            except Exception as e:
+                logger.warning(f"长期记忆管理器加载失败: {e}")
+                self.memory = None
 
         # 持久化：默认开启，注入 None 可关闭（用于纯内存测试）
         self._db = db if db is not None else db_module
@@ -146,6 +158,7 @@ class ConversationManager:
             f"llm={self.llm!r} asr={self.asr!r} tts={self.tts!r} "
             f"emotion={'on' if self.emotion else 'off'} "
             f"intimacy={'on' if self.intimacy else 'off'} "
+            f"memory={'on' if self.memory else 'off'} "
             f"persist={self._persist}"
         )
 
@@ -292,6 +305,11 @@ class ConversationManager:
         6. 检测伤害性话语 → on_hurt
         7. 同步亲密度到情绪引擎（调节共鸣）
         8. 亲密度上下文注入 system_prompt
+
+        T2-05 起增加长期记忆：
+        9. 从用户输入中提取值得记住的事实（规则式）
+        10. 召回与当前输入相关的记忆（TF-IDF 语义检索）
+        11. 将 memory_brief 注入 system_prompt（让 AI 能引用过去的事）
         """
         if not user_text or not user_text.strip():
             return ""
@@ -361,14 +379,29 @@ class ConversationManager:
         )
 
         try:
+            # T2-05: 长期记忆提取 + 召回
+            memory_brief = None
+            if self.memory is not None:
+                try:
+                    # 从用户输入中提取值得长期记住的事实
+                    if config.get("memory.long_term_enabled", True):
+                        stored = self.memory.extract_and_store(user_text)
+                        if stored:
+                            logger.debug(f"提取到 {len(stored)} 条新记忆")
+                    # 召回与当前输入相关的记忆作为上下文
+                    memory_brief = self.memory.recall_brief(user_text)
+                except Exception as e:
+                    logger.debug(f"长期记忆处理失败（不影响对话）: {e}")
+
             # T2-04: 用 PersonalityContext 组合亲密度+情绪+用户称呼
-            # 一次性注入人格 prompt，不再拼接 prompt_hint
+            # T2-05: 注入 memory_brief，让 AI 能引用过去的记忆
             from core.personality import PersonalityContext
             user_alias = config.get("app.user_alias") or None
             p_ctx = PersonalityContext.from_intimacy_and_emotion(
                 intimacy_manager=self.intimacy,
                 emotion_engine=self.emotion if ai_emo_label else None,
                 user_alias=user_alias,
+                memory_brief=memory_brief,
             )
             sys_prompt = self.personality.build_system_prompt(p_ctx)
             resp = self.llm.chat(
@@ -493,6 +526,8 @@ class ConversationManager:
             "intimacy_level": (
                 self.intimacy.get_level().value if self.intimacy else None
             ),
+            "memory": "on" if self.memory else "off",
+            "memory_count": self.memory.count() if self.memory else 0,
             "llm": repr(self.llm),
             "asr": repr(self.asr),
             "tts": repr(self.tts),

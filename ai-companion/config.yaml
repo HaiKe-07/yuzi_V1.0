@@ -83,6 +83,10 @@ memory:
   chroma_path: "data/chroma"
   short_term_turns: 20      # 短期记忆保留轮数
   recall_top_k: 5          # 检索召回数量
+  # T2-05 长期记忆参数
+  recall_threshold: 0.15   # 召回相似度阈值（低于此值不召回）
+  dedup_threshold: 0.75    # 去重相似度阈值（高于此值视为重复，更新而非新增）
+  long_term_enabled: true  # 是否启用长期记忆提取
 
 # 情绪系统
 emotion:
