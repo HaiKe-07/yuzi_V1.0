@@ -21,7 +21,7 @@ from .volc_tts import VolcTTSAdapter
 # provider 名 → 适配器类
 _REGISTRY: dict[str, type[BaseTTS]] = {
     "cloud_openai_tts": OpenAITTSAdapter,
-    "cloud_volc": VolcTTSAdapter,  # 骨架，T2-06 补全
+    "cloud_volc": VolcTTSAdapter,  # T2-06 情感 TTS
     # "local_cosyvoice": CosyVoiceAdapter,  # T5-03 启用
 }
 

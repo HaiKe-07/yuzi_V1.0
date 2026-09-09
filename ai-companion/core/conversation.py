@@ -445,6 +445,9 @@ class ConversationManager:
     def speak(self, text: str) -> TTSResult:
         """把文本转为语音并播放。
 
+        T2-06 起注入 AI 当前情绪，让情感 TTS 音色随情绪变化。
+        仅 cloud_volc 适配器支持 emotion 参数；OpenAI TTS 会忽略。
+
         Args:
             text: 待播报文本
         Returns:
@@ -455,7 +458,17 @@ class ConversationManager:
 
         self._set_state(ConversationState.SPEAKING)
         try:
-            result = self.tts.synthesize(text)
+            # T2-06: 把 AI 当前情绪传给 TTS（情感音色）
+            tts_kwargs: dict = {}
+            if self.emotion is not None:
+                try:
+                    ai_label = self.emotion.get_label()
+                    if ai_label and ai_label != "中性":
+                        tts_kwargs["emotion"] = ai_label
+                except Exception as e:
+                    logger.debug(f"获取 AI 情绪失败（TTS 用默认）: {e}")
+
+            result = self.tts.synthesize(text, **tts_kwargs)
             # 播放（无 audio device 时静默失败）
             from speech.player import is_available as player_ok
             if player_ok() and result.audio:
