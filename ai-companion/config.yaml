@@ -123,12 +123,13 @@ intimacy:
   silence_days_loss: 2.0
   daily_chat_gain: 0.5
 
-# 主动话题
+# 主动话题（T2-07）
 proactive:
-  silence_threshold_sec: 21600  # 6 小时
-  morning_hour: 8
-  night_remind_hour: 23
-  random_share_prob: 0.05
+  enabled: true                 # 是否启用主动话题
+  silence_threshold_sec: 21600  # 静音触发阈值（6 小时未互动）
+  morning_hour: 8               # 早晨问候时段（8 点前后 2 小时）
+  night_remind_hour: 23         # 深夜提醒时段（23 点后）
+  random_share_prob: 0.05       # 随机分享概率（5%）
 
 # 唤醒词
 wake_word:

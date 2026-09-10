@@ -149,6 +149,18 @@ def create_app() -> FastAPI:
             "bytes": len(result.audio),
         }
 
+    # -------- 主动话题检测（T2-07）--------
+    @app.get("/api/proactive/check")
+    async def proactive_check():
+        """前端定时轮询（建议每 5-10 分钟）。
+
+        返回主动话题文本，或 None（无需触发）。
+        前端拿到文本后自行调用 /api/chat 发起对话。
+        """
+        m = get_manager()
+        text = m.check_proactive()
+        return {"triggered": text is not None, "text": text}
+
     # -------- 配置读 --------
     @app.get("/api/settings")
     async def get_settings():

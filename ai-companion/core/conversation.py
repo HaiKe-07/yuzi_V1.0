@@ -83,6 +83,7 @@ class ConversationManager:
         emotion_engine=None,
         intimacy_manager=None,
         memory_manager=None,
+        proactive_manager=None,
         max_turns: int | None = None,
         db: Database | None = None,
         persist: bool = True,
@@ -122,6 +123,20 @@ class ConversationManager:
                 logger.warning(f"长期记忆管理器加载失败: {e}")
                 self.memory = None
 
+        # 主动话题管理器（T2-07）：默认懒加载，注入 False 可关闭
+        if proactive_manager is False:
+            self.proactive = None
+        else:
+            try:
+                from core.proactive import get_proactive_manager
+                self.proactive = proactive_manager or get_proactive_manager(
+                    intimacy_manager=self.intimacy,
+                    memory_manager=self.memory,
+                )
+            except Exception as e:
+                logger.warning(f"主动话题管理器加载失败: {e}")
+                self.proactive = None
+
         # 持久化：默认开启，注入 None 可关闭（用于纯内存测试）
         self._db = db if db is not None else db_module
         self._persist = persist
@@ -159,6 +174,7 @@ class ConversationManager:
             f"emotion={'on' if self.emotion else 'off'} "
             f"intimacy={'on' if self.intimacy else 'off'} "
             f"memory={'on' if self.memory else 'off'} "
+            f"proactive={'on' if self.proactive else 'off'} "
             f"persist={self._persist}"
         )
 
@@ -421,6 +437,14 @@ class ConversationManager:
         )
         self._emit("ai_reply", text=resp.text, ai_emotion=ai_emo_label)
         self._set_state(ConversationState.IDLE)
+
+        # T2-07: 用户有互动，重置主动话题静音计时器
+        if self.proactive is not None:
+            try:
+                self.proactive.on_user_interaction()
+            except Exception as e:
+                logger.debug(f"主动话题计时器更新失败: {e}")
+
         return resp.text
 
     def _infer_polarity_for_intimacy(self, text: str) -> float:
@@ -524,6 +548,26 @@ class ConversationManager:
         return reply
 
     # ============================================================
+    # 主动话题（T2-07）
+    # ============================================================
+    def check_proactive(self) -> str | None:
+        """检测是否应主动发起话题。
+
+        供前端定时轮询调用（建议每 5-10 分钟）。
+        若有触发，返回话题文本；否则返回 None。
+        """
+        if self.proactive is None:
+            return None
+        try:
+            msg = self.proactive.check()
+            if msg:
+                logger.info(f"主动话题: {msg.trigger.value} → {msg.text[:30]!r}...")
+                return msg.text
+        except Exception as e:
+            logger.debug(f"主动话题检测失败: {e}")
+        return None
+
+    # ============================================================
     # 调试
     # ============================================================
     def status(self) -> dict:
@@ -541,6 +585,11 @@ class ConversationManager:
             ),
             "memory": "on" if self.memory else "off",
             "memory_count": self.memory.count() if self.memory else 0,
+            "proactive": "on" if self.proactive else "off",
+            "proactive_silence": (
+                round(self.proactive.silence_duration, 1)
+                if self.proactive else None
+            ),
             "llm": repr(self.llm),
             "asr": repr(self.asr),
             "tts": repr(self.tts),
