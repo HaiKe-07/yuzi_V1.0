@@ -550,16 +550,18 @@ class ConversationManager:
     # ============================================================
     # 主动话题（T2-07）
     # ============================================================
-    def check_proactive(self) -> str | None:
+    def check_proactive(self, now: float | None = None) -> str | None:
         """检测是否应主动发起话题。
 
         供前端定时轮询调用（建议每 5-10 分钟）。
         若有触发，返回话题文本；否则返回 None。
+        Args:
+            now: 当前时间戳（测试注入），None 用 time.time()
         """
         if self.proactive is None:
             return None
         try:
-            msg = self.proactive.check()
+            msg = self.proactive.check(now=now)
             if msg:
                 logger.info(f"主动话题: {msg.trigger.value} → {msg.text[:30]!r}...")
                 return msg.text

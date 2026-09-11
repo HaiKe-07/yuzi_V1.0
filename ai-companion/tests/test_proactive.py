@@ -85,10 +85,10 @@ def test_intimacy_tier_high():
 def test_silence_triggers():
     """超过阈值未互动应触发静音话题。"""
     pm = _make_manager(silence_threshold=100)
-    # 模拟 200 秒未互动
-    pm._last_interaction_at = time.time() - 200
     # 用非早晨/非深夜时段避免触发其他条件
     now = _timestamp(14)
+    # 模拟 200 秒未互动（用 now-200 保证时间一致）
+    pm._last_interaction_at = now - 200
     msg = pm.check(intimacy_score=5, now=now)
     assert msg is not None
     assert msg.trigger == ProactiveTrigger.SILENCE
@@ -99,9 +99,9 @@ def test_silence_triggers():
 def test_silence_not_triggered_within_threshold():
     """未超过阈值不应触发。"""
     pm = _make_manager(silence_threshold=1000)
-    pm._last_interaction_at = time.time()  # 刚互动
     # 用 14 点（非早晨 7-10、非深夜 23-2）
     now = _timestamp(14)
+    pm._last_interaction_at = now  # 刚互动（用 now 而非 time.time 避免时区问题）
     # 禁用随机以避免干扰
     pm.random_prob = 0
     msg = pm.check(intimacy_score=5, now=now)
@@ -412,10 +412,11 @@ def test_check_proactive_returns_text():
     """check_proactive 应返回话题文本。"""
     with __import__("tempfile").TemporaryDirectory() as tmp:
         m = _make_manager_with_proactive(tmp)
+        # 用 14 点（非早晨/深夜）避免触发其他条件
+        now = _timestamp(14)
         # 模拟长时间未互动（触发静音）
-        m.proactive._last_interaction_at = time.time() - 999
-        now = _timestamp(14)  # 非早晨/深夜
-        text = m.check_proactive()
+        m.proactive._last_interaction_at = now - 999
+        text = m.check_proactive(now=now)
         assert text is not None
         assert len(text) > 0
         print(f"  [✓] check_proactive 返回: {text[:30]}")
