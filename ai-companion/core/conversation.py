@@ -12,8 +12,8 @@
 - 不依赖真实麦克风：text_chat() 可独立运行
 
 T2-08 阶段扩展：
-- 语音唤醒 / 打断
-- 流式 LLM + 流式 TTS（边想边说）
+- 语音唤醒 / 打断（wake_word + interruption 集成）
+- 流式 LLM + 流式 TTS（边想边说）（后续阶段）
 """
 from __future__ import annotations
 
@@ -84,6 +84,8 @@ class ConversationManager:
         intimacy_manager=None,
         memory_manager=None,
         proactive_manager=None,
+        wake_word_detector=None,
+        interruption_detector=None,
         max_turns: int | None = None,
         db: Database | None = None,
         persist: bool = True,
@@ -137,6 +139,29 @@ class ConversationManager:
                 logger.warning(f"主动话题管理器加载失败: {e}")
                 self.proactive = None
 
+        # 唤醒词检测器（T2-08）：默认懒加载，注入 False 可关闭
+        # 文本检测器始终可用；音频检测器在无麦克风环境降级
+        if wake_word_detector is False:
+            self.wake_word = None
+        else:
+            try:
+                from speech.wake_word import get_wake_word_detector
+                self.wake_word = wake_word_detector or get_wake_word_detector()
+            except Exception as e:
+                logger.warning(f"唤醒词检测器加载失败: {e}")
+                self.wake_word = None
+
+        # 打断检测器（T2-08）：默认懒加载，注入 False 可关闭
+        if interruption_detector is False:
+            self.interruption = None
+        else:
+            try:
+                from speech.interruption import get_interruption_detector
+                self.interruption = interruption_detector or get_interruption_detector()
+            except Exception as e:
+                logger.warning(f"打断检测器加载失败: {e}")
+                self.interruption = None
+
         # 持久化：默认开启，注入 None 可关闭（用于纯内存测试）
         self._db = db if db is not None else db_module
         self._persist = persist
@@ -175,6 +200,8 @@ class ConversationManager:
             f"intimacy={'on' if self.intimacy else 'off'} "
             f"memory={'on' if self.memory else 'off'} "
             f"proactive={'on' if self.proactive else 'off'} "
+            f"wake_word={'on' if self.wake_word else 'off'} "
+            f"interruption={'on' if self.interruption else 'off'} "
             f"persist={self._persist}"
         )
 
@@ -470,6 +497,7 @@ class ConversationManager:
         """把文本转为语音并播放。
 
         T2-06 起注入 AI 当前情绪，让情感 TTS 音色随情绪变化。
+        T2-08 起播放期间监听用户打断：检测到用户开口 → 立即停止播放。
         仅 cloud_volc 适配器支持 emotion 参数；OpenAI TTS 会忽略。
 
         Args:
@@ -481,6 +509,14 @@ class ConversationManager:
             return TTSResult(audio=b"", voice=self.tts.default_voice)
 
         self._set_state(ConversationState.SPEAKING)
+        # T2-08: 播放期间监听用户打断
+        interrupted = False
+        if self.interruption is not None:
+            try:
+                self.interruption.on_interrupt(self._on_interrupt)
+                self.interruption.start_monitoring()
+            except Exception as e:
+                logger.debug(f"打断监听启动失败（继续播放）: {e}")
         try:
             # T2-06: 把 AI 当前情绪传给 TTS（情感音色）
             tts_kwargs: dict = {}
@@ -498,13 +534,26 @@ class ConversationManager:
             if player_ok() and result.audio:
                 from speech.player import play
                 play(result.audio, format=result.format, blocking=True)
+        except _InterruptedError:
+            # 用户打断：TTS 已被 _on_interrupt 停止
+            interrupted = True
+            logger.info("AI 播放被用户打断")
+            result = TTSResult(audio=b"", voice=self.tts.default_voice)
         except Exception as e:
             self._set_state(ConversationState.IDLE)
             self._emit("error", exception=e)
             logger.error(f"TTS 调用失败: {e}")
             raise
         finally:
+            # T2-08: 停止打断监听
+            if self.interruption is not None:
+                try:
+                    self.interruption.stop_monitoring()
+                except Exception as e:
+                    logger.debug(f"打断监听停止失败: {e}")
             self._set_state(ConversationState.IDLE)
+        if interrupted:
+            self._emit("interrupted", text=text)
         return result
 
     def voice_chat(self, audio: bytes | None = None) -> str:

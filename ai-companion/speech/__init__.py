@@ -1,7 +1,11 @@
-"""speech 包：语音 ASR / TTS / 录音 / 播放。
+"""speech 包：语音 ASR / TTS / 录音 / 播放 / 唤醒 / 打断。
 
 对外暴露统一接口：
-    from speech import get_default_asr, get_default_tts, record, play
+    from speech import (
+        get_default_asr, get_default_tts,
+        record, play,
+        get_wake_word_detector, get_interruption_detector,
+    )
 """
 from .base import ASRResult, BaseASR
 from .factory import clear_cache as clear_asr_cache
@@ -26,6 +30,21 @@ from .tts_factory import (
     get_tts,
 )
 from .tts_cache import TTSCache
+# T2-08 唤醒词与打断
+from .wake_word import (
+    BaseWakeWordDetector,
+    EnergyVADWakeDetector,
+    OpenWakeWordDetector,
+    TextWakeWordDetector,
+    get_default_wake_word_detector,
+    get_wake_word_detector,
+    reset_wake_word_detector,
+)
+from .interruption import (
+    InterruptionDetector,
+    get_interruption_detector,
+    reset_interruption_detector,
+)
 
 __all__ = [
     # ASR
@@ -52,4 +71,16 @@ __all__ = [
     "play_file",
     "stop_playback",
     "player_available",
+    # T2-08 唤醒词
+    "BaseWakeWordDetector",
+    "EnergyVADWakeDetector",
+    "OpenWakeWordDetector",
+    "TextWakeWordDetector",
+    "get_default_wake_word_detector",
+    "get_wake_word_detector",
+    "reset_wake_word_detector",
+    # T2-08 打断
+    "InterruptionDetector",
+    "get_interruption_detector",
+    "reset_interruption_detector",
 ]
