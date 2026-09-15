@@ -39,6 +39,10 @@ from speech import (
 EventCallback = Callable[..., Any]
 
 
+class _InterruptedError(Exception):
+    """T2-08 用户打断信号：用于从 speak() 的阻塞播放中跳出。"""
+
+
 def _maybe_create_emotion_engine():
     """按配置懒加载 AI 情绪引擎。
 
@@ -143,6 +147,9 @@ class ConversationManager:
         # 文本检测器始终可用；音频检测器在无麦克风环境降级
         if wake_word_detector is False:
             self.wake_word = None
+        elif not config.get("wake_word.enabled", True):
+            self.wake_word = None
+            logger.info("唤醒词检测已关闭（config.wake_word.enabled=false）")
         else:
             try:
                 from speech.wake_word import get_wake_word_detector
@@ -154,6 +161,9 @@ class ConversationManager:
         # 打断检测器（T2-08）：默认懒加载，注入 False 可关闭
         if interruption_detector is False:
             self.interruption = None
+        elif not config.get("interruption.enabled", True):
+            self.interruption = None
+            logger.info("打断检测已关闭（config.interruption.enabled=false）")
         else:
             try:
                 from speech.interruption import get_interruption_detector
@@ -188,6 +198,8 @@ class ConversationManager:
             "emotion": [],
             "intimacy": [],
             "error": [],
+            "interrupted": [],
+            "wake": [],
         }
 
         # 同步亲密度到情绪引擎（T2-02/T2-03 联动）
@@ -240,7 +252,10 @@ class ConversationManager:
         - user_input(text, emotion=None):   用户输入（含检测到的情绪）
         - ai_reply(text, ai_emotion=None):  AI 回复（含 AI 当前情绪）
         - emotion(user_emotion, ai_emotion):情绪更新（T2-01）
+        - intimacy(score, level):          亲密度更新（T2-03）
         - error(exception):                 发生异常
+        - interrupted(text):                AI 播放被用户打断（T2-08）
+        - wake(text):                       检测到唤醒词（T2-08）
         """
         if event not in self._hooks:
             raise ValueError(f"未知事件: {event!r}")
@@ -619,6 +634,99 @@ class ConversationManager:
         return None
 
     # ============================================================
+    # 语音唤醒与打断（T2-08）
+    # ============================================================
+    def _on_interrupt(self) -> None:
+        """打断回调：停止 TTS 播放，触发 interrupted 事件。"""
+        try:
+            from speech.player import stop as stop_playback
+            stop_playback()
+        except Exception as e:
+            logger.debug(f"停止播放失败: {e}")
+
+    def interrupt(self) -> None:
+        """手动触发打断（前端按钮或 API 调用）。
+
+        等价于打断检测器触发，会停止当前 TTS 播放。
+        """
+        logger.info("收到手动打断请求")
+        self._on_interrupt()
+        self._emit("interrupted", text="")
+
+    def check_wake_word(self, text: str | None = None) -> bool:
+        """检测唤醒词。
+
+        两种模式：
+        1. 文本模式（text 不为空）：检测文本是否含唤醒词
+        2. 音频模式（text=None）：依赖 wake_word.start() 持续监听
+
+        检测到唤醒时触发 wake 事件，并把状态置为 IDLE（就绪）。
+        供前端定时轮询调用（建议每 1-2 秒，文本模式）。
+
+        Args:
+            text: 文本模式下的待检测文本；None 则依赖音频监听
+        Returns:
+            True=检测到唤醒词
+        """
+        if self.wake_word is None:
+            return False
+        try:
+            if text is not None:
+                # 文本模式
+                from speech.wake_word import TextWakeWordDetector
+                if isinstance(self.wake_word, TextWakeWordDetector):
+                    # fire_text 内部触发 _fire（detector 的 on_detect 回调）
+                    # 但 ConversationManager 的 wake 事件需要手动发出
+                    triggered = self.wake_word.detect_text(text)
+                else:
+                    # 音频检测器也支持文本关键词检测（fallback）
+                    triggered = self.wake_word.detect_text(text) \
+                        if hasattr(self.wake_word, "detect_text") else False
+                if triggered:
+                    self._set_state(ConversationState.IDLE)
+                    self._emit("wake", text=text)
+                return triggered
+            # 音频模式：依赖 start() 启动的监听线程
+            # 此处不做主动检测，仅返回当前状态
+            return self.wake_word.is_listening
+        except Exception as e:
+            logger.debug(f"唤醒词检测失败: {e}")
+            return False
+
+    def start_wake_listening(self) -> bool:
+        """启动唤醒词持续监听（音频模式）。
+
+        Returns:
+            True=已启动（或已运行）；False=不可用
+        """
+        if self.wake_word is None:
+            return False
+        try:
+            if self.wake_word.is_available():
+                self.wake_word.on_detect(self._on_wake)
+                self.wake_word.start()
+                return True
+            logger.info("唤醒词音频监听不可用（无麦克风），建议用文本模式")
+            return False
+        except Exception as e:
+            logger.warning(f"唤醒词监听启动失败: {e}")
+            return False
+
+    def stop_wake_listening(self) -> None:
+        """停止唤醒词监听。"""
+        if self.wake_word is None:
+            return
+        try:
+            self.wake_word.stop()
+        except Exception as e:
+            logger.debug(f"唤醒词监听停止失败: {e}")
+
+    def _on_wake(self) -> None:
+        """唤醒回调：状态置 IDLE，触发 wake 事件。"""
+        self._set_state(ConversationState.IDLE)
+        self._emit("wake", text="")
+
+    # ============================================================
     # 调试
     # ============================================================
     def status(self) -> dict:
@@ -640,6 +748,17 @@ class ConversationManager:
             "proactive_silence": (
                 round(self.proactive.silence_duration, 1)
                 if self.proactive else None
+            ),
+            "wake_word": (
+                f"on ({self.wake_word.name})"
+                if self.wake_word else "off"
+            ),
+            "wake_listening": (
+                self.wake_word.is_listening if self.wake_word else False
+            ),
+            "interruption": "on" if self.interruption else "off",
+            "interruption_monitoring": (
+                self.interruption.is_monitoring if self.interruption else False
             ),
             "llm": repr(self.llm),
             "asr": repr(self.asr),

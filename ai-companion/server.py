@@ -10,12 +10,16 @@
 - WS / SSE 流式回复在 T2 阶段扩展（T1-08 先做同步接口）
 
 接口：
-    GET  /api/health           健康检查
-    GET  /api/status           对话状态
+    GET  /api/health            健康检查
+    GET  /api/status            对话状态
     GET  /api/history           拉取最近对话
     POST /api/chat              文本对话（不调用 TTS）
     POST /api/speak             文本转语音（仅 TTS）
     POST /api/voice             语音对话（需音频上传，T1-08 占位）
+    GET  /api/proactive/check   主动话题检测（T2-07）
+    POST /api/wake/check        唤醒词检测（文本模式，T2-08）
+    POST /api/wake/listening    启动/停止唤醒词音频监听（T2-08）
+    POST /api/interrupt         手动触发打断（T2-08）
     GET  /api/settings          读配置
     PUT  /api/settings          改配置（重启生效）
 """
@@ -57,6 +61,16 @@ class SettingsUpdate(BaseModel):
     asr_provider: str | None = None
     tts_provider: str | None = None
     tts_voice: str | None = None
+
+
+class WakeCheckRequest(BaseModel):
+    """唤醒词文本检测请求（T2-08）。"""
+    text: str = Field(..., description="待检测文本")
+
+
+class WakeListeningRequest(BaseModel):
+    """唤醒词音频监听开关请求（T2-08）。"""
+    enabled: bool = Field(True, description="True=启动监听；False=停止")
 
 
 # ============================================================
@@ -160,6 +174,49 @@ def create_app() -> FastAPI:
         m = get_manager()
         text = m.check_proactive()
         return {"triggered": text is not None, "text": text}
+
+    # -------- 唤醒词检测（T2-08）--------
+    @app.post("/api/wake/check")
+    async def wake_check(req: WakeCheckRequest):
+        """文本模式唤醒词检测。
+
+        前端在用户输入框收到文本后，发送文本到这里检测是否含唤醒词。
+        若命中，state 会置 IDLE（就绪），前端可继续走正常对话流程。
+
+        音频唤醒词监听需另外调用 /api/wake/listening 启动。
+        """
+        m = get_manager()
+        triggered = m.check_wake_word(text=req.text)
+        return {"triggered": triggered, "state": m.state.value}
+
+    @app.post("/api/wake/listening")
+    async def wake_listening(req: WakeListeningRequest):
+        """启动/停止唤醒词音频监听。
+
+        前端启动应用后调用 enabled=true 开启持续监听；
+        退出应用或需要安静时调用 enabled=false 停止。
+
+        注意：需要麦克风和 numpy 支持，沙箱/无麦克风环境会返回 ok=false。
+        """
+        m = get_manager()
+        if req.enabled:
+            ok = m.start_wake_listening()
+            return {"ok": ok, "listening": m.wake_word.is_listening if m.wake_word else False}
+        else:
+            m.stop_wake_listening()
+            return {"ok": True, "listening": False}
+
+    # -------- 手动打断（T2-08）--------
+    @app.post("/api/interrupt")
+    async def interrupt():
+        """手动触发打断。
+
+        前端在用户点击"停止播放"按钮或检测到用户开口时调用。
+        会停止当前 TTS 播放并把状态置为 IDLE。
+        """
+        m = get_manager()
+        m.interrupt()
+        return {"ok": True, "state": m.state.value}
 
     # -------- 配置读 --------
     @app.get("/api/settings")

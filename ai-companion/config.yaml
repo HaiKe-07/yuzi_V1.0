@@ -131,11 +131,26 @@ proactive:
   night_remind_hour: 23         # 深夜提醒时段（23 点后）
   random_share_prob: 0.05       # 随机分享概率（5%）
 
-# 唤醒词
+# 唤醒词（T2-08）
 wake_word:
-  enabled: false        # 第二阶段开启
-  engine: "openwakeword"  # openwakeword / porcupine
-  keyword: ""
+  enabled: true                   # 是否启用唤醒词检测
+  engine: "text"                  # text / energy_vad / openwakeword
+  keyword: ""                    # 唤醒关键词（空则用 companion_name）
+  aliases: []                    # 唤醒词别名列表
+  # energy_vad 后端参数
+  threshold_db: -30.0            # 检测阈值（dB），高于此能量视为开口
+  min_speech_sec: 0.3            # 最短语音时长（秒），过短视为噪声
+  # openwakeword 后端参数
+  model_path: ""                 # 自定义模型路径（空用内置）
+  threshold: 0.5                 # 关键词置信度阈值
+
+# 语音打断（T2-08）
+interruption:
+  enabled: true                  # 是否启用打断检测
+  threshold_db: -25.0            # 打断阈值（高于唤醒词，减少误触发）
+  min_speech_sec: 0.2            # 最短语音时长（秒）
+  cooldown_sec: 1.5              # 打断冷却（秒），避免抖动
+  chunk_sec: 0.1                 # 监听分块粒度（秒）
 
 # 桌面 UI
 ui:
