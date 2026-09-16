@@ -196,22 +196,35 @@ def test_energy_vad_empty_audio_no_trigger():
 def test_factory_text_backend():
     """config engine=text 应返回 TextWakeWordDetector。"""
     with patch("speech.wake_word.config") as mock_cfg:
+        wake_cfg = {
+            "engine": "text",
+            "keyword": "小爱",
+            "aliases": [],
+        }
         mock_cfg.get.side_effect = lambda key, default=None: {
+            "wake_word": wake_cfg,
             "wake_word.engine": "text",
             "wake_word.keyword": "小爱",
             "wake_word.aliases": [],
             "app.companion_name": "",
         }.get(key, default)
         det = get_default_wake_word_detector()
-        assert isinstance(det, TextWakeWordDetector)
-        assert det.keyword == "小爱"
+        assert isinstance(det, TextWakeWordDetector), f"期望 TextWakeWordDetector，实际 {type(det).__name__}"
+        assert det.keyword == "小爱", f"keyword 应为 小爱，实际 {det.keyword}"
     print("  [✓] 工厂选择 text 后端")
 
 
 def test_factory_energy_vad_backend():
     """config engine=energy_vad 应返回 EnergyVADWakeDetector。"""
     with patch("speech.wake_word.config") as mock_cfg:
+        wake_cfg = {
+            "engine": "energy_vad",
+            "keyword": "",
+            "threshold_db": -35.0,
+            "min_speech_sec": 0.3,
+        }
         mock_cfg.get.side_effect = lambda key, default=None: {
+            "wake_word": wake_cfg,
             "wake_word.engine": "energy_vad",
             "wake_word.keyword": "",
             "wake_word.threshold_db": -35.0,
@@ -219,20 +232,25 @@ def test_factory_energy_vad_backend():
             "app.companion_name": "",
         }.get(key, default)
         det = get_default_wake_word_detector()
-        assert isinstance(det, EnergyVADWakeDetector)
+        assert isinstance(det, EnergyVADWakeDetector), f"期望 EnergyVADWakeDetector，实际 {type(det).__name__}"
     print("  [✓] 工厂选择 energy_vad 后端")
 
 
 def test_factory_keyword_falls_back_to_companion_name():
     """未指定 keyword 时用 companion_name。"""
     with patch("speech.wake_word.config") as mock_cfg:
+        wake_cfg = {
+            "engine": "text",
+            "keyword": "",
+        }
         mock_cfg.get.side_effect = lambda key, default=None: {
+            "wake_word": wake_cfg,
             "wake_word.engine": "text",
             "wake_word.keyword": "",
             "app.companion_name": "小薇",
         }.get(key, default)
         det = get_default_wake_word_detector()
-        assert det.keyword == "小薇"
+        assert det.keyword == "小薇", f"keyword 应为 小薇，实际 {det.keyword}"
     print("  [✓] keyword 回退到 companion_name")
 
 

@@ -16,6 +16,10 @@ soundfile>=0.12.1      # WAV 落盘调试
 numpy>=1.26.0
 # websocket-client>=1.7.0  # 讯飞流式 ASR 用，T1-04 暂未启用
 
+# --- T2-08 唤醒词与打断 ---
+# openwakeword>=0.6.0  # 可选：关键词唤醒检测（默认用能量 VAD 兜底）
+                        # 安装后 config.wake_word.engine 设为 "openwakeword"
+
 # --- 记忆系统 ---
 # 第一阶段只用 SQLite
 # ChromaDB 在第二阶段（长期记忆）启用：
