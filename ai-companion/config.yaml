@@ -157,7 +157,9 @@ ui:
   type: "electron"      # electron / pyqt
   websocket_port: 8765
   http_port: 8766
-  live2d_model_path: "ui/assets/live2d/default"
+  # T3-01: Live2D 模型路径（前端加载用，相对 ui/ 目录）
+  live2d_model_path: "live2d/default/default.model3.json"
+  live2d_enabled: true           # 是否启用 Live2D 形象
 
 # 工具
 tools:

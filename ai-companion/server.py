@@ -20,6 +20,8 @@
     POST /api/wake/check        唤醒词检测（文本模式，T2-08）
     POST /api/wake/listening    启动/停止唤醒词音频监听（T2-08）
     POST /api/interrupt         手动触发打断（T2-08）
+    GET  /api/live2d/status     Live2D 形象状态（AI 情绪，T3-01/T3-02）
+    POST /api/live2d/wake       唤醒形象事件（T3-05 预留）
     GET  /api/settings          读配置
     PUT  /api/settings          改配置（重启生效）
 """
@@ -216,6 +218,37 @@ def create_app() -> FastAPI:
         """
         m = get_manager()
         m.interrupt()
+        return {"ok": True, "state": m.state.value}
+
+    # -------- Live2D 状态（T3-01/T3-02）--------
+    @app.get("/api/live2d/status")
+    async def live2d_status():
+        """前端 Live2D 形象轮询用（建议每 1-2 秒）。
+
+        返回 AI 当前情绪标签 + 对话状态，前端据此切换 Live2D 表情。
+        T3-01: 前端启动时调用获取初始状态。
+        T3-02: 轮询检测情绪变化 → 切换表情。
+        """
+        m = get_manager()
+        s = m.status()
+        return {
+            "ai_emotion": s.get("ai_emotion"),
+            "state": s.get("state"),
+            "wake_word": s.get("wake_word"),
+            "wake_listening": s.get("wake_listening"),
+            "intimacy_level": s.get("intimacy_level"),
+            "intimacy_score": s.get("intimacy_score"),
+        }
+
+    @app.post("/api/live2d/wake")
+    async def live2d_wake():
+        """唤醒形象（T3-05 预留）。
+
+        唤醒词触发后，前端调用此接口让后端记录唤醒事件。
+        后端会把状态置为 IDLE，并触发 wake 事件。
+        """
+        m = get_manager()
+        m._on_wake()
         return {"ok": True, "state": m.state.value}
 
     # -------- 配置读 --------

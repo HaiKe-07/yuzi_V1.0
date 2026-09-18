@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import ChatPanel from './components/ChatPanel.vue'
+import Live2DView from './components/Live2DView.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import TitleBar from './components/TitleBar.vue'
 import { useCompanionStore } from './stores/companion'
@@ -27,7 +28,15 @@ onMounted(async () => {
       >设置</button>
     </nav>
     <main class="content">
-      <ChatPanel v-show="activeTab === 'chat'" />
+      <!-- T3-01: 左侧 Live2D 形象区 + 右侧对话/设置区 -->
+      <div class="main-layout" v-show="activeTab === 'chat'">
+        <div class="avatar-panel">
+          <Live2DView />
+        </div>
+        <div class="chat-panel-wrapper">
+          <ChatPanel />
+        </div>
+      </div>
       <SettingsPanel v-show="activeTab === 'settings'" />
     </main>
   </div>
@@ -63,6 +72,22 @@ onMounted(async () => {
 }
 .content {
   flex: 1;
+  overflow: hidden;
+}
+.main-layout {
+  display: flex;
+  height: 100%;
+}
+.avatar-panel {
+  width: 40%;
+  min-width: 280px;
+  height: 100%;
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+.chat-panel-wrapper {
+  flex: 1;
+  height: 100%;
   overflow: hidden;
 }
 </style>
