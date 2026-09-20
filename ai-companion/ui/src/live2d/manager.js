@@ -1,5 +1,5 @@
 /**
- * Live2D 管理器（T3-01）
+ * Live2D 管理器（T3-01/T3-02）
  *
  * 封装 pixi-live2d-display 的加载、渲染、动画控制逻辑。
  * Vue 组件通过此模块操作 Live2D，不直接碰 PIXI/Live2D API。
@@ -7,10 +7,11 @@
  * 功能：
  * 1. 初始化 PIXI Application + Live2D 模型加载
  * 2. 待机动画（自动眨眼、呼吸、随机动作）
- * 3. 表情切换（setExpression，为 T3-02 预留）
+ * 3. 表情切换（setExpression）—— T3-02 情绪联动核心
  * 4. 动作播放（startMotion，如点头、挥手）
  * 5. 嘴型同步（lipSync，为 T2-06 情感 TTS 联动预留）
  * 6. 鼠标拖拽视角跟随
+ * 7. 情绪轮询 / SSE 订阅（T3-02 自动切换表情）
  *
  * 依赖：
  *   npm install pixi.js@6.5.10 pixi-live2d-display@0.4.0
@@ -58,10 +59,14 @@ export class Live2DManager {
     this.currentExpression = 'default'
     // 自动动作定时器
     this._idleTimer = null
-    this._blinkTimer = null
+    // 情绪轮询定时器 / SSE
+    this._emotionPollTimer = null
+    this._eventSource = null
+    this._lastExpression = null
     // 回调
     this.onReady = null
     this.onError = null
+    this.onExpressionChange = null
   }
 
   /**
@@ -170,17 +175,103 @@ export class Live2DManager {
   }
 
   /**
-   * 切换表情（为 T3-02 预留）
-   * @param {string} name - 表情名称（happy/sad/angry/neutral/excited）
+   * 切换表情（T3-02 核心）
+   * @param {string} name - 表情名称（happy/sad/angry/neutral/excited/happy_strong 等）
    */
   setExpression(name) {
     if (!this.model || !this.modelReady) return
+    if (name === this.currentExpression) return // 避免重复切换
     try {
       this.model.expression(name)
       this.currentExpression = name
       console.debug('[Live2D] 表情切换:', name)
+      if (this.onExpressionChange) this.onExpressionChange(name)
     } catch (e) {
-      console.warn('[Live2D] 表情切换失败:', e)
+      // 模型可能没有该表情文件，静默回退到 neutral
+      console.warn('[Live2D] 表情切换失败（可能缺少表情文件）:', name)
+      if (name !== 'neutral') {
+        try { this.model.expression('neutral') } catch {}
+      }
+    }
+  }
+
+  /**
+   * T3-02: 启动情绪联动
+   * 优先用 SSE（/api/emotion/stream），不支持时回退到轮询（/api/live2d/status）
+   * @param {string} baseUrl - 后端地址，如 http://localhost:18731
+   */
+  startEmotionSync(baseUrl = '') {
+    // 先尝试 SSE
+    if (typeof EventSource !== 'undefined') {
+      this._startSSE(baseUrl)
+    } else {
+      this._startPolling(baseUrl)
+    }
+  }
+
+  /**
+   * SSE 模式：订阅 /api/emotion/stream
+   */
+  _startSSE(baseUrl) {
+    try {
+      this._eventSource = new EventSource(`${baseUrl}/api/emotion/stream`)
+      this._eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          if (data.expression && data.expression !== this._lastExpression) {
+            this._lastExpression = data.expression
+            this.setExpression(data.expression)
+          }
+        } catch (e) {
+          // 心跳包或解析失败，忽略
+        }
+      }
+      this._eventSource.onerror = () => {
+        console.warn('[Live2D] SSE 连接失败，回退到轮询')
+        this._stopSSE()
+        this._startPolling(baseUrl)
+      }
+      console.info('[Live2D] 情绪 SSE 订阅已启动')
+    } catch (e) {
+      console.warn('[Live2D] SSE 启动失败，回退到轮询', e)
+      this._startPolling(baseUrl)
+    }
+  }
+
+  /**
+   * 轮询模式：定时拉 /api/live2d/status
+   */
+  _startPolling(baseUrl) {
+    this._emotionPollTimer = setInterval(async () => {
+      try {
+        const resp = await fetch(`${baseUrl}/api/live2d/status`)
+        const data = await resp.json()
+        if (data.expression && data.expression !== this._lastExpression) {
+          this._lastExpression = data.expression
+          this.setExpression(data.expression)
+        }
+      } catch (e) {
+        // 后端未启动，静默
+      }
+    }, 3000) // 每 3 秒轮询
+    console.info('[Live2D] 情绪轮询已启动（3秒间隔）')
+  }
+
+  /**
+   * 停止情绪联动
+   */
+  stopEmotionSync() {
+    this._stopSSE()
+    if (this._emotionPollTimer) {
+      clearInterval(this._emotionPollTimer)
+      this._emotionPollTimer = null
+    }
+  }
+
+  _stopSSE() {
+    if (this._eventSource) {
+      this._eventSource.close()
+      this._eventSource = null
     }
   }
 
@@ -226,6 +317,7 @@ export class Live2DManager {
    * 销毁：释放资源
    */
   destroy() {
+    this.stopEmotionSync()
     this._stopIdle()
     if (this.model) {
       try { this.model.destroy() } catch {}
@@ -263,34 +355,9 @@ export class Live2DManager {
       ready: this.modelReady,
       expression: this.currentExpression,
       modelLoaded: this.model !== null,
+      emotionSync: this._eventSource !== null || this._emotionPollTimer !== null,
     }
   }
-}
-
-/**
- * AI 情绪标签 → Live2D 表情名称映射
- * Python 后端情绪系统输出的中文标签，映射到 Live2D 表情文件名
- * T3-02 表情情绪联动时使用
- */
-export const EMOTION_TO_EXPRESSION = {
-  '开心': 'happy',
-  '难过': 'sad',
-  '生气': 'angry',
-  '中性': 'neutral',
-  '期待': 'excited',
-  '焦虑': 'sad',
-  '疲惫': 'neutral',
-  '平静': 'neutral',
-  '害羞': 'happy',
-  '孤独': 'sad',
-  '委屈': 'sad',
-}
-
-/**
- * 把 AI 情绪标签转为 Live2D 表情名
- */
-export function emotionToExpression(emotionLabel) {
-  return EMOTION_TO_EXPRESSION[emotionLabel] || 'neutral'
 }
 
 /**

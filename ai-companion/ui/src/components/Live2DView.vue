@@ -1,9 +1,10 @@
 <script setup>
 /**
- * Live2D 形象组件（T3-01）
+ * Live2D 形象组件（T3-01/T3-02）
  *
  * 在 canvas 中渲染 Live2D 模型，支持待机动画。
  * 无模型或库未加载时，显示 CSS 占位形象。
+ * T3-02: 启动情绪联动，AI 情绪变化自动切换表情。
  *
  * 布局：左侧形象区 + 右侧对话区（由 App.vue 控制）
  */
@@ -15,20 +16,29 @@ const store = useCompanionStore()
 const manager = getLive2DManager()
 
 const canvasRef = ref(null)
-const status = ref({ ready: false, error: '' })
+const status = ref({ ready: false, error: '', expression: 'neutral' })
 const showPlaceholder = ref(true)
 
 // Live2D 模型路径（可从 config 读取，默认用占位模型目录）
 const MODEL_PATH = './live2d/default/default.model3.json'
+// 后端 API 地址（Electron 内本地服务）
+const API_BASE = 'http://localhost:18731'
 
 onMounted(async () => {
   // 等 companion store 初始化完成（获取后端状态）
   await store.init()
   await initLive2D()
-  // 监听 AI 情绪变化 → 表情联动（T3-02 预留）
+  // T3-02: 无论模型是否加载，都启动情绪联动
+  // 模型加载成功 → 切换 Live2D 表情
+  // 模型未加载 → 占位形象也会根据情绪变色
+  manager.startEmotionSync(API_BASE)
+  manager.onExpressionChange = (name) => {
+    status.value.expression = name
+  }
+  // 监听 store 的情绪变化（来自 /api/status 轮询）
   watch(() => store.status?.ai_emotion, (newEmo) => {
-    if (newEmo && status.value.ready) {
-      manager.setExpression(emotionLabelToName(newEmo))
+    if (newEmo) {
+      status.value.expression = emotionLabelToName(newEmo)
     }
   })
 })
@@ -53,6 +63,8 @@ function emotionLabelToName(label) {
   const map = {
     '开心': 'happy', '难过': 'sad', '生气': 'angry',
     '中性': 'neutral', '期待': 'excited', '平静': 'neutral',
+    '兴奋': 'excited', '焦虑': 'sad', '疲惫': 'neutral',
+    '孤独': 'sad', '亲昵': 'happy', '感动': 'calm',
   }
   return map[label] || 'neutral'
 }
@@ -76,7 +88,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="live2d-view">
+  <div class="live2d-view" :data-expression="status.expression">
     <!-- Live2D canvas（模型加载后显示） -->
     <canvas
       ref="canvasRef"
@@ -84,15 +96,19 @@ onUnmounted(() => {
       :class="{ hidden: showPlaceholder }"
     ></canvas>
 
-    <!-- 占位形象（无模型时显示，CSS 动画） -->
+    <!-- 占位形象（无模型时显示，CSS 动画 + 情绪颜色） -->
     <div v-if="showPlaceholder" class="placeholder">
-      <div class="avatar">
+      <div class="avatar" :class="'emo-' + status.expression">
         <div class="avatar-face">
-          <div class="eye left" :class="{ blink: !store.loading }"></div>
-          <div class="eye right" :class="{ blink: !store.loading }"></div>
-          <div class="mouth" :class="{ talking: store.loading }"></div>
+          <div class="eye left"></div>
+          <div class="eye right"></div>
+          <div class="mouth" :class="status.expression"></div>
         </div>
         <div class="hair"></div>
+        <!-- 情绪气泡 -->
+        <div class="emo-bubble" v-if="status.expression !== 'neutral'">
+          {{ status.expression }}
+        </div>
       </div>
       <p class="hint">
         {{ status.error || 'Live2D 形象占位' }}
@@ -119,6 +135,21 @@ onUnmounted(() => {
   justify-content: center;
   background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
   overflow: hidden;
+  transition: background 0.5s;
+}
+
+/* T3-02: 根据情绪调整背景色调 */
+.live2d-view[data-expression="happy"] {
+  background: linear-gradient(135deg, #1a2e1a 0%, #163e2e 100%);
+}
+.live2d-view[data-expression="sad"] {
+  background: linear-gradient(135deg, #1a1a2e 0%, #0e1a3e 100%);
+}
+.live2d-view[data-expression="angry"] {
+  background: linear-gradient(135deg, #2e1a1a 0%, #3e1616 100%);
+}
+.live2d-view[data-expression="excited"] {
+  background: linear-gradient(135deg, #2e2a1a 0%, #3e3616 100%);
 }
 
 .live2d-canvas {
@@ -152,7 +183,13 @@ onUnmounted(() => {
   background: #f0d0c0;
   border-radius: 50% 50% 45% 45% / 55% 55% 45% 45%;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  transition: background 0.5s;
 }
+
+/* 情绪影响肤色 */
+.avatar.emo-happy .avatar-face { background: #f5d8c8; }
+.avatar.emo-sad .avatar-face { background: #e0c8b8; }
+.avatar.emo-angry .avatar-face { background: #f0c0b0; }
 
 .hair {
   position: absolute;
@@ -177,10 +214,6 @@ onUnmounted(() => {
 .eye.left { left: 50px; }
 .eye.right { right: 50px; }
 
-.eye.blink {
-  animation: blink 4s infinite;
-}
-
 @keyframes blink {
   0%, 90%, 100% { transform: scaleY(1); }
   95% { transform: scaleY(0.1); }
@@ -195,13 +228,26 @@ onUnmounted(() => {
   height: 6px;
   background: #c08080;
   border-radius: 0 0 10px 10px;
+  transition: all 0.3s;
 }
-.mouth.talking {
-  animation: talk 0.3s infinite;
-}
-@keyframes talk {
-  0%, 100% { height: 4px; }
-  50% { height: 12px; border-radius: 50%; }
+
+/* 情绪影响嘴型 */
+.mouth.happy { border-radius: 0 0 30px 30px; height: 10px; }
+.mouth.sad { border-radius: 30px 30px 0 0; bottom: 35px; }
+.mouth.angry { border-radius: 0 0 10px 10px; height: 8px; }
+.mouth.excited { border-radius: 50%; height: 14px; width: 14px; }
+.mouth.neutral { border-radius: 0 0 10px 10px; }
+
+.emo-bubble {
+  position: absolute;
+  top: -10px;
+  right: -60px;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  font-size: 11px;
+  color: #a0c0f0;
+  white-space: nowrap;
 }
 
 .hint {

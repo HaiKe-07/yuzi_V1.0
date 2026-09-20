@@ -1,6 +1,12 @@
 """core.emotion 包：情绪类型 + 用户情绪感知 + AI 独立情绪（T2-02 扩展）。"""
 from .ai_emotion import AIEmotionEngine, AIEmotionState
 from .detector import detect_emotion, detect_emotion_with_llm
+from .live2d_mapper import (
+    base_expression,
+    emotion_to_expression,
+    get_available_expressions,
+    is_strong_variant,
+)
 from .types import (
     EMOTION_PAD,
     EmotionState,
@@ -18,4 +24,7 @@ __all__ = [
     "detect_emotion", "detect_emotion_with_llm",
     # AI 情绪（T2-01 PAD + T2-02 关系维度扩展）
     "AIEmotionEngine", "AIEmotionState",
+    # Live2D 表情映射（T3-02）
+    "emotion_to_expression", "get_available_expressions",
+    "is_strong_variant", "base_expression",
 ]

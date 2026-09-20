@@ -20,8 +20,9 @@
     POST /api/wake/check        唤醒词检测（文本模式，T2-08）
     POST /api/wake/listening    启动/停止唤醒词音频监听（T2-08）
     POST /api/interrupt         手动触发打断（T2-08）
-    GET  /api/live2d/status     Live2D 形象状态（AI 情绪，T3-01/T3-02）
+    GET  /api/live2d/status     Live2D 形象状态（含表情名，T3-01/T3-02）
     POST /api/live2d/wake       唤醒形象事件（T3-05 预留）
+    GET  /api/emotion/stream    情绪变化 SSE 推送（T3-02）
     GET  /api/settings          读配置
     PUT  /api/settings          改配置（重启生效）
 """
@@ -231,8 +232,22 @@ def create_app() -> FastAPI:
         """
         m = get_manager()
         s = m.status()
+        # T3-02: 把情绪标签映射成 Live2D 表情名
+        emotion_label = s.get("ai_emotion")
+        expression = None
+        intensity = 0.5
+        if emotion_label and m.emotion:
+            try:
+                from core.emotion import emotion_to_expression
+                state = m.emotion.get_state()
+                expression = emotion_to_expression(emotion_label, state.intensity)
+                intensity = round(state.intensity, 2)
+            except Exception:
+                pass
         return {
-            "ai_emotion": s.get("ai_emotion"),
+            "ai_emotion": emotion_label,
+            "expression": expression,        # Live2D 表情文件名
+            "intensity": intensity,           # 情绪强度 0~1
             "state": s.get("state"),
             "wake_word": s.get("wake_word"),
             "wake_listening": s.get("wake_listening"),
@@ -250,6 +265,58 @@ def create_app() -> FastAPI:
         m = get_manager()
         m._on_wake()
         return {"ok": True, "state": m.state.value}
+
+    # -------- 情绪推送（T3-02 SSE）--------
+    @app.get("/api/emotion/stream")
+    async def emotion_stream():
+        """SSE 推送：情绪变化时主动通知前端切换表情。
+
+        比 /api/live2d/status 轮询更实时：
+        - 前端 EventSource 连接此端点
+        - 后端在情绪变化时推送 {expression, intensity} 事件
+        - 前端收到后调用 manager.setExpression()
+
+        事件格式：
+            data: {"expression": "happy_strong", "intensity": 0.8, "emotion": "开心"}
+        """
+        from fastapi.responses import StreamingResponse
+        import asyncio
+        import json
+
+        m = get_manager()
+        last_expression = None
+
+        async def event_generator():
+            nonlocal last_expression
+            while True:
+                try:
+                    s = m.status()
+                    emotion_label = s.get("ai_emotion")
+                    expression = None
+                    intensity = 0.5
+                    if emotion_label and m.emotion:
+                        from core.emotion import emotion_to_expression
+                        state = m.emotion.get_state()
+                        expression = emotion_to_expression(emotion_label, state.intensity)
+                        intensity = round(state.intensity, 2)
+                    # 只在表情变化时推送
+                    if expression and expression != last_expression:
+                        last_expression = expression
+                        yield f"data: {json.dumps({'expression': expression, 'intensity': intensity, 'emotion': emotion_label}, ensure_ascii=False)}\n\n"
+                    yield ": heartbeat\n\n"
+                except Exception:
+                    yield f"data: {json.dumps({'error': 'emotion_unavailable'})}\n\n"
+                await asyncio.sleep(2)
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     # -------- 配置读 --------
     @app.get("/api/settings")

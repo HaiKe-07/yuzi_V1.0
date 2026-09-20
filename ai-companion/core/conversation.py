@@ -200,6 +200,7 @@ class ConversationManager:
             "error": [],
             "interrupted": [],
             "wake": [],
+            "live2d_expression": [],
         }
 
         # 同步亲密度到情绪引擎（T2-02/T2-03 联动）
@@ -256,6 +257,7 @@ class ConversationManager:
         - error(exception):                 发生异常
         - interrupted(text):                AI 播放被用户打断（T2-08）
         - wake(text):                       检测到唤醒词（T2-08）
+        - live2d_expression(expression, emotion, intensity):  AI 情绪→Live2D 表情（T3-02）
         """
         if event not in self._hooks:
             raise ValueError(f"未知事件: {event!r}")
@@ -399,6 +401,21 @@ class ConversationManager:
                     user_emotion=user_emo_label,
                     ai_emotion=ai_emo_label,
                 )
+                # T3-02: 情绪变化 → Live2D 表情联动
+                try:
+                    from core.emotion import emotion_to_expression
+                    ai_state = self.emotion.get_state()
+                    expression = emotion_to_expression(
+                        ai_emo_label, ai_state.intensity
+                    )
+                    self._emit(
+                        "live2d_expression",
+                        expression=expression,
+                        emotion=ai_emo_label,
+                        intensity=round(ai_state.intensity, 2),
+                    )
+                except Exception as e:
+                    logger.debug(f"表情映射失败（不影响对话）: {e}")
             except Exception as e:
                 logger.debug(f"情绪处理失败（不影响对话）: {e}")
 
