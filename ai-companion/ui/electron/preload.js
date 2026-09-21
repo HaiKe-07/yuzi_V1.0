@@ -22,10 +22,14 @@ async function request(path, options = {}) {
 }
 
 contextBridge.exposeInMainWorld('companion', {
+  // 后端地址（供 EventSource / Live2D 直接连接用）
+  getBackendBase: () => BASE,
   // 健康检查
   health: () => request('/health'),
   // 状态
   status: () => request('/status'),
+  // Live2D 状态（AI 情绪 → 表情，T3-02）
+  live2dStatus: () => request('/live2d/status'),
   // 历史
   history: (limit = 50) => request(`/history?limit=${limit}`),
   // 文本对话

@@ -8,7 +8,7 @@
  *
  * 布局：左侧形象区 + 右侧对话区（由 App.vue 控制）
  */
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { getLive2DManager } from '../live2d/manager.js'
 import { useCompanionStore } from '../stores/companion'
 
@@ -21,27 +21,52 @@ const showPlaceholder = ref(true)
 
 // Live2D 模型路径（可从 config 读取，默认用占位模型目录）
 const MODEL_PATH = './live2d/default/default.model3.json'
-// 后端 API 地址（Electron 内本地服务）
-const API_BASE = 'http://localhost:18731'
+
+// 后端 API 地址：优先取 Electron preload 暴露的真实地址，避免端口漂移
+function resolveApiBase() {
+  try {
+    if (window.companion && window.companion.getBackendBase) {
+      return window.companion.getBackendBase()
+    }
+  } catch (e) {
+    // 纯浏览器调试，用默认
+  }
+  return 'http://localhost:18731'
+}
 
 onMounted(async () => {
   // 等 companion store 初始化完成（获取后端状态）
   await store.init()
   await initLive2D()
   // T3-02: 无论模型是否加载，都启动情绪联动
-  // 模型加载成功 → 切换 Live2D 表情
-  // 模型未加载 → 占位形象也会根据情绪变色
-  manager.startEmotionSync(API_BASE)
+  // 模型加载成功 → 切换 Live2D 表情（后端 expression 驱动）
+  // 模型未加载 → 占位形象也会根据情绪变色（气泡显示情绪名）
+  manager.startEmotionSync(resolveApiBase())
   manager.onExpressionChange = (name) => {
     status.value.expression = name
   }
-  // 监听 store 的情绪变化（来自 /api/status 轮询）
-  watch(() => store.status?.ai_emotion, (newEmo) => {
-    if (newEmo) {
-      status.value.expression = emotionLabelToName(newEmo)
-    }
-  })
+  // 占位形象：用 store 的情绪标签显示中文气泡（模型驱动时 expression 为后端英文名）
+  if (window.companion) {
+    initPlaceholderEmotion()
+  }
 })
+
+// 占位形象情绪：轮询 live2d/status 拿中文情绪标签（模型未加载时驱动占位气泡）
+function initPlaceholderEmotion() {
+  const update = async () => {
+    try {
+      const data = await window.companion.live2dStatus()
+      if (data && data.ai_emotion) {
+        store.status = { ...store.status, ai_emotion: data.ai_emotion }
+      }
+    } catch (e) {
+      // 后端未就绪，静默
+    }
+  }
+  update()
+  // 每 3 秒刷新占位情绪（仅占位模式使用）
+  window._placeholderEmotionTimer = setInterval(update, 3000)
+}
 
 async function initLive2D() {
   if (!canvasRef.value) return
@@ -59,16 +84,6 @@ async function initLive2D() {
   }
 }
 
-function emotionLabelToName(label) {
-  const map = {
-    '开心': 'happy', '难过': 'sad', '生气': 'angry',
-    '中性': 'neutral', '期待': 'excited', '平静': 'neutral',
-    '兴奋': 'excited', '焦虑': 'sad', '疲惫': 'neutral',
-    '孤独': 'sad', '亲昵': 'happy', '感动': 'calm',
-  }
-  return map[label] || 'neutral'
-}
-
 function handleWake() {
   // 唤醒按钮（测试用，实际由 T2-08 唤醒词触发）
   if (status.value.ready) {
@@ -81,8 +96,17 @@ function onResize() {
   if (status.value.ready) manager.resize()
 }
 
+// 展示用的情绪文本：占位模式用 store 的中文标签，模型模式用后端 expression
+const displayEmotionalText = computed(() => {
+  return store.status?.ai_emotion || status.value.expression
+})
+
 onUnmounted(() => {
   manager.destroy()
+  if (window._placeholderEmotionTimer) {
+    clearInterval(window._placeholderEmotionTimer)
+    window._placeholderEmotionTimer = null
+  }
   window.removeEventListener('resize', onResize)
 })
 </script>
@@ -105,9 +129,9 @@ onUnmounted(() => {
           <div class="mouth" :class="status.expression"></div>
         </div>
         <div class="hair"></div>
-        <!-- 情绪气泡 -->
-        <div class="emo-bubble" v-if="status.expression !== 'neutral'">
-          {{ status.expression }}
+        <!-- 情绪气泡：占位模式显示中文标签，模型模式显示后端 expression -->
+        <div class="emo-bubble" v-if="displayEmotionalText && displayEmotionalText !== 'neutral'">
+          {{ displayEmotionalText }}
         </div>
       </div>
       <p class="hint">

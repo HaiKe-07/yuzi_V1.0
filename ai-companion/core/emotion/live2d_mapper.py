@@ -114,8 +114,11 @@ def get_available_expressions() -> list[str]:
     """返回所有可能的 Live2D 表情名（去重）。
 
     用于前端检测模型支持哪些表情。
+    基础表情 + 强变体（happy_strong 等）都列为可用。
     """
-    return sorted(set(_EMOTION_TO_EXPRESSION.values()) | _STRONG_VARIANTS)
+    base = set(_EMOTION_TO_EXPRESSION.values())
+    strong = {f"{b}_strong" for b in _STRONG_VARIANTS}
+    return sorted(base | strong)
 
 
 def is_strong_variant(name: str) -> bool:
