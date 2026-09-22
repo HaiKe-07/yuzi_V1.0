@@ -35,10 +35,12 @@
     },
     "files": [
       "electron/**/*",
-      "dist/**/*"
+      "dist/**/*",
+      "assets/**/*"
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "assets/tray.png"
     }
   }
 }

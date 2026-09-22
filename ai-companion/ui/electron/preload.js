@@ -3,7 +3,7 @@
 // 通过 contextBridge 暴露 window.companion API，渲染进程
 // 不直接持有 Node 能力，只通过 ipcRenderer-like 接口与后端通信。
 
-const { contextBridge } = require('electron')
+const { contextBridge, ipcRenderer } = require('electron')
 
 const BACKEND_PORT = parseInt(process.env.BACKEND_PORT || '18731', 10)
 const BASE = `http://127.0.0.1:${BACKEND_PORT}/api`
@@ -49,12 +49,17 @@ contextBridge.exposeInMainWorld('companion', {
     method: 'PUT',
     body: JSON.stringify(updates),
   }),
-  // 窗口控制（无边框标题栏用）
+  // 窗口控制（无边框标题栏用，T3-04）
+  // 通过 ipcRenderer 走主进程：
+  //   minimize → 最小化到任务栏
+  //   close    → 关闭窗口（主进程按配置最小化到托盘或退出）
+  //   toggleAlwaysOnTop → 切换窗口置顶（托盘"总在最前"）
   window: {
-    minimize: () => {
-      // 通过 ipcRenderer 走主进程；此处简化为 fetch 不需要
-      // 真实实现需要 ipcRenderer.send
+    minimize: () => ipcRenderer.send('window:minimize'),
+    close: () => ipcRenderer.send('window:close'),
+    // 供托盘菜单读取窗口置顶状态
+    onAlwaysOnTopChange: (cb) => {
+      ipcRenderer.on('window:always-on-top-changed', (_e, opts) => cb(opts))
     },
-    close: () => {},
   },
 })

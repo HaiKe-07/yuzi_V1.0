@@ -160,6 +160,10 @@ ui:
   # T3-01: Live2D 模型路径（前端加载用，相对 ui/ 目录）
   live2d_model_path: "live2d/default/default.model3.json"
   live2d_enabled: true           # 是否启用 Live2D 形象
+  # T3-04: 系统托盘常驻
+  auto_start: false              # 是否开机自启
+  minimize_to_tray: true         # 关闭窗口时最小化到托盘（而非退出）
+  tray_tooltip: "AI 陪伴助手"     # 托盘挂起提示文案
 
 # 工具
 tools:

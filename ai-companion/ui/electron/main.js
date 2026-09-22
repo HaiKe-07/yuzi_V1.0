@@ -3,14 +3,20 @@
 // 职责：
 // 1. 启动 Python 后端 HTTP API（companion.server）作为子进程
 // 2. 创建 BrowserWindow 加载 Vue 渲染进程（dev: Vite dev server / prod: 本地 dist）
-// 3. 系统托盘 + 单实例锁（T3-04 阶段补全）
+// 3. 系统托盘常驻 + 单实例锁 + 开机自启（T3-04）
+//
+// T3-04 关键行为：
+// - 单实例：重复启动聚焦已存在窗口
+// - 托盘：显示/隐藏主窗口、打开主页、总在最前、开机自启开关、退出
+// - 关闭窗口：按 config.ui.minimize_to_tray，最小化到托盘而非退出
+// - 开机自启：读取 config.yaml 的 ui.auto_start，也可在托盘菜单实时切换
 //
 // 关键约束：
 // - Python 解释器路径通过 PYTHON_BIN 环境变量覆盖，便于打包后定位
 // - 后端端口通过 BACKEND_PORT 环境变量覆盖，与 config.server.port 对齐
 // - 退出时清理子进程，避免端口残留
 
-const { app, BrowserWindow, shell } = require('electron')
+const { app, BrowserWindow, shell, Tray, Menu, nativeImage, ipcMain } = require('electron')
 const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
@@ -24,9 +30,52 @@ const BACKEND_HOST = '127.0.0.1'
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..')
 // server.py 路径（ai-companion/server.py）
 const SERVER_PATH = path.join(PROJECT_ROOT, 'server.py')
+// 托盘图标路径（ui/assets/tray.png）
+const TRAY_ICON = path.join(__dirname, '..', 'assets', 'tray.png')
 
 let pythonProc = null
 let mainWindow = null
+let tray = null
+// 是否真正退出（托盘"退出"或系统退出）；false 表示仅隐藏到托盘
+let isQuitting = false
+// 开机自启当前状态（初始读 config，可被托盘菜单切换）
+let isAutoStart = false
+
+// ============================================================
+// 0. 读取 T3-04 配置（纯文本解析 config.yaml 的 ui 段，避免引入 yaml 依赖）
+// ============================================================
+function readUiConfig() {
+  const def = { autoStart: false, minimizeToTray: true, tooltip: 'AI 陪伴助手' }
+  try {
+    const p = path.join(PROJECT_ROOT, 'config.yaml')
+    if (!fs.existsSync(p)) return def
+    const text = fs.readFileSync(p, 'utf8')
+    // 只取 ui: 块，避免误匹配其它同名 key
+    const blockMatch = text.match(/^ui:\s*\n([\s\S]*?)(?=\n\S[^:\n]+:\s*$)/m)
+    const block = blockMatch ? blockMatch[1] : ''
+    const val = (key, dft) => {
+      const m = block.match(new RegExp('^\\s*' + key + '\\s*:\\s*(\\S+)', 'm'))
+      return m ? m[1] : dft
+    }
+    def.autoStart = val('auto_start', 'false') === 'true'
+    def.minimizeToTray = val('minimize_to_tray', 'true') !== 'false'
+    def.tooltip = (val('tray_tooltip', 'AI 陪伴助手') || 'AI 陪伴助手').replace(/['"]/g, '')
+    return def
+  } catch (e) {
+    return def
+  }
+}
+const uiConfig = readUiConfig()
+
+function applyAutoStartPreference() {
+  // 打包安装后需要有 app.setLoginItemSettings；开发态一般不可用，静默忽略
+  try {
+    app.setLoginItemSettings({ openAtLogin: isAutoStart })
+    console.log(`[main] 开机自启: ${isAutoStart ? '开' : '关'}`)
+  } catch (e) {
+    console.warn('[main] 设置开机自启失败（开发态通常忽略）', e.message)
+  }
+}
 
 // ============================================================
 // 1. Python 后端子进程
@@ -104,7 +153,7 @@ function createWindow() {
     height: 720,
     minWidth: 720,
     minHeight: 540,
-    frame: false,           // 无边框，T3-04 自绘标题栏
+    frame: false,           // 无边框，自绘标题栏
     transparent: false,
     backgroundColor: '#1a1a2e',
     title: 'AI 陪伴助手',
@@ -129,44 +178,159 @@ function createWindow() {
     return { action: 'deny' }
   })
 
+  // T3-04: 关闭按钮（window:close）触发 close 事件，
+  // 若配了最小化到托盘则拦截隐藏，而非真正退出
+  mainWindow.on('close', (e) => {
+    if (uiConfig.minimizeToTray && !isQuitting) {
+      e.preventDefault()
+      mainWindow.hide()
+      console.log('[main] 已最小化到托盘（右键托盘图标可退出）')
+    }
+  })
+
   mainWindow.on('closed', () => {
     mainWindow = null
   })
 }
 
-// ============================================================
-// 3. App 生命周期
-// ============================================================
-app.whenReady().then(async () => {
-  // 启动后端
-  startPythonBackend()
-  try {
-    await waitForBackend()
-    console.log('[main] 后端就绪')
-  } catch (e) {
-    console.error('[main] 后端未就绪，将直接加载前端', e.message)
-  }
-
-  createWindow()
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+// ipc：渲染进程标题栏按钮 → 主进程
+function registerIpc() {
+  ipcMain.on('window:minimize', () => {
+    if (mainWindow) mainWindow.minimize()
   })
-})
+  ipcMain.on('window:close', () => {
+    // 触发 close 事件；minimize_to_tray 时被拦截为隐藏
+    if (mainWindow) mainWindow.close()
+  })
+}
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
+// ============================================================
+// 3. 系统托盘（T3-04）
+// ============================================================
+function showMainWindow() {
+  if (!mainWindow) {
+    createWindow()
+    return
   }
-})
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
 
-app.on('before-quit', () => {
-  stopPythonBackend()
-})
+function refreshTrayMenu() {
+  if (!tray) return
+  const alwaysOnTop = mainWindow ? mainWindow.isAlwaysOnTop() : false
+  const visible = mainWindow && mainWindow.isVisible()
+  const menu = Menu.buildFromTemplate([
+    { label: visible ? '隐藏窗口' : '显示窗口', click: () => {
+      if (visible) mainWindow.hide()
+      else showMainWindow()
+    } },
+    { type: 'separator' },
+    {
+      label: '总在最前',
+      type: 'checkbox',
+      checked: alwaysOnTop,
+      click: (item) => {
+        if (mainWindow) mainWindow.setAlwaysOnTop(item.checked)
+      },
+    },
+    {
+      label: `开机自启 ${isAutoStart ? '✔' : ''}`,
+      type: 'checkbox',
+      checked: isAutoStart,
+      click: (item) => {
+        isAutoStart = item.checked
+        applyAutoStartPreference()
+        refreshTrayMenu()
+      },
+    },
+    { type: 'separator' },
+    { label: '退出', click: () => {
+      isQuitting = true
+      app.quit()
+    } },
+  ])
+  tray.setContextMenu(menu)
+}
 
-// 退出时兜底清理子进程
-process.on('exit', () => stopPythonBackend())
-process.on('SIGINT', () => {
-  stopPythonBackend()
-  process.exit(0)
-})
+function createTray() {
+  let icon
+  try {
+    icon = nativeImage.createFromPath(TRAY_ICON)
+    if (icon.isEmpty()) icon = nativeImage.createEmpty()
+  } catch (e) {
+    icon = nativeImage.createEmpty()
+  }
+  tray = new Tray(icon)
+  tray.setToolTip(uiConfig.tooltip)
+  // 单击托盘图标：显示 / 隐藏主窗口
+  tray.on('click', () => {
+    if (mainWindow && mainWindow.isVisible()) mainWindow.hide()
+    else showMainWindow()
+  })
+  refreshTrayMenu()
+}
+
+// ============================================================
+// 4. 单实例锁（T3-04）
+// ============================================================
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  // 已有实例在运行，聚焦它（对应窗口）并退出当前进程
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    showMainWindow()
+  })
+}
+
+// ============================================================
+// 5. App 生命周期
+// ============================================================
+if (gotLock) {
+  app.whenReady().then(async () => {
+    // 开机自启初始状态来自 config
+    isAutoStart = uiConfig.autoStart
+    if (isAutoStart) applyAutoStartPreference()
+
+    // 启动后端
+    startPythonBackend()
+    try {
+      await waitForBackend()
+      console.log('[main] 后端就绪')
+    } catch (e) {
+      console.error('[main] 后端未就绪，将直接加载前端', e.message)
+    }
+
+    createWindow()
+    registerIpc()
+    createTray()
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
+  })
+
+  // 托盘常驻：窗口全关（只有真正退出才会触发）不再自动退出
+  app.on('window-all-closed', () => {
+    if (isQuitting) app.quit()
+    // 否则保持托盘常驻
+  })
+
+  app.on('before-quit', () => {
+    isQuitting = true
+    stopPythonBackend()
+    if (tray) {
+      tray.destroy()
+      tray = null
+    }
+  })
+
+  // 退出时兜底清理子进程
+  process.on('exit', () => stopPythonBackend())
+  process.on('SIGINT', () => {
+    stopPythonBackend()
+    process.exit(0)
+  })
+}
