@@ -57,6 +57,8 @@ contextBridge.exposeInMainWorld('companion', {
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),
     close: () => ipcRenderer.send('window:close'),
+    // T3-05: 唤醒时从托盘弹出窗口（若隐藏）
+    show: () => ipcRenderer.send('window:show'),
     // 供托盘菜单读取窗口置顶状态
     onAlwaysOnTopChange: (cb) => {
       ipcRenderer.on('window:always-on-top-changed', (_e, opts) => cb(opts))

@@ -202,6 +202,10 @@ function registerIpc() {
     // 触发 close 事件；minimize_to_tray 时被拦截为隐藏
     if (mainWindow) mainWindow.close()
   })
+  // T3-05: 唤醒时若窗口已隐藏到托盘，则弹出并聚焦
+  ipcMain.on('window:show', () => {
+    showMainWindow()
+  })
 }
 
 // ============================================================

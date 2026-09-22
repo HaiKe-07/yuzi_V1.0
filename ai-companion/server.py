@@ -21,7 +21,7 @@
     POST /api/wake/listening    启动/停止唤醒词音频监听（T2-08）
     POST /api/interrupt         手动触发打断（T2-08）
     GET  /api/live2d/status     Live2D 形象状态（含表情名，T3-01/T3-02）
-    POST /api/live2d/wake       唤醒形象事件（T3-05 预留）
+    POST /api/live2d/wake       唤醒形象事件（T3-05：记录唤醒并返回轻应声）
     GET  /api/emotion/stream    情绪变化 SSE 推送（T3-02）
     GET  /api/settings          读配置
     PUT  /api/settings          改配置（重启生效）
@@ -251,20 +251,29 @@ def create_app() -> FastAPI:
             "state": s.get("state"),
             "wake_word": s.get("wake_word"),
             "wake_listening": s.get("wake_listening"),
+            # T3-05: 唤醒计数/最近唤醒时间/轻应声（前端轮询检测点亮）
+            "wake_count": s.get("wake_count"),
+            "last_wake_ts": s.get("last_wake_ts"),
+            "wake_greeting": s.get("wake_greeting"),
             "intimacy_level": s.get("intimacy_level"),
             "intimacy_score": s.get("intimacy_score"),
         }
 
     @app.post("/api/live2d/wake")
     async def live2d_wake():
-        """唤醒形象（T3-05 预留）。
+        """唤醒形象（T3-05）。
 
         唤醒词触发后，前端调用此接口让后端记录唤醒事件。
-        后端会把状态置为 IDLE，并触发 wake 事件。
+        后端会把状态置为 IDLE，并返回轻应声文案供前端播报。
         """
         m = get_manager()
         m._on_wake()
-        return {"ok": True, "state": m.state.value}
+        return {
+            "ok": True,
+            "state": m.state.value,
+            "wake_count": m._wake_count,
+            "greeting": m.wake_greeting(),
+        }
 
     # -------- 情绪推送（T3-02 SSE）--------
     @app.get("/api/emotion/stream")

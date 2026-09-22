@@ -190,6 +190,10 @@ class ConversationManager:
         # 状态机
         self._state = ConversationState.IDLE
 
+        # T3-05: 唤醒事件跟踪（供前端轮询检测"点亮"）
+        self._wake_count = 0
+        self._last_wake_ts: float | None = None
+
         # 事件钩子
         self._hooks: dict[str, list[EventCallback]] = {
             "state_change": [],
@@ -700,6 +704,7 @@ class ConversationManager:
                     triggered = self.wake_word.detect_text(text) \
                         if hasattr(self.wake_word, "detect_text") else False
                 if triggered:
+                    self._record_wake()
                     self._set_state(ConversationState.IDLE)
                     self._emit("wake", text=text)
                 return triggered
@@ -740,8 +745,21 @@ class ConversationManager:
 
     def _on_wake(self) -> None:
         """唤醒回调：状态置 IDLE，触发 wake 事件。"""
+        self._record_wake()
         self._set_state(ConversationState.IDLE)
         self._emit("wake", text="")
+
+    # T3-05: 记录唤醒事件（供前端轮询检测"点亮"）
+    def _record_wake(self) -> None:
+        self._wake_count += 1
+        self._last_wake_ts = time.time()
+
+    def wake_greeting(self) -> str:
+        """唤醒轻应声文案（T3-05）。
+
+        前端唤醒后播报这段轻应声（短暂、温柔、不含引导）。
+        """
+        return str(config.get("wake_word.greeting", "嗯，我在呢。")).strip()
 
     # ============================================================
     # 调试
@@ -773,6 +791,10 @@ class ConversationManager:
             "wake_listening": (
                 self.wake_word.is_listening if self.wake_word else False
             ),
+            # T3-05: 唤醒事件计数 + 最近唤醒时间，供前端轮询检测点亮
+            "wake_count": self._wake_count,
+            "last_wake_ts": self._last_wake_ts,
+            "wake_greeting": self.wake_greeting(),
             "interruption": "on" if self.interruption else "off",
             "interruption_monitoring": (
                 self.interruption.is_monitoring if self.interruption else False

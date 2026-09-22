@@ -135,7 +135,7 @@ def test_live2d_manager_js_exists():
     assert "startEmotionSync" in content
     assert "stopEmotionSync" in content
     assert "lipSync" in content
-    assert "onWake" in content
+    assert "wakeUp" in content or "onWake" in content  # T3-05: 唤醒点亮（原名 onWake → wakeUp）
     # T3-02: 前端直接消费后端返回的 expression（SSE/live2d/status），无需本地映射表
     print("  [✓] manager.js 结构完整（含情绪联动接口）")
 

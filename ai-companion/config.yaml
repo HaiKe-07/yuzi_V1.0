@@ -143,6 +143,9 @@ wake_word:
   # openwakeword 后端参数
   model_path: ""                 # 自定义模型路径（空用内置）
   threshold: 0.5                 # 关键词置信度阈值
+  # T3-05: 唤醒点亮交互
+  greeting: "嗯，我在呢。"        # 唤醒后的轻应声文案（由 TTS 播报）
+  light_up_duration: 1.6         # 点亮动画持续时长（秒）
 
 # 语音打断（T2-08）
 interruption:

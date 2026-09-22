@@ -57,6 +57,8 @@ export class Live2DManager {
     this.canvas = null
     this.modelReady = false
     this.currentExpression = 'default'
+    // T3-05: 形象当前是否处于活跃（点亮）状态；false = 休眠（暗色）
+    this.awake = false
     // 自动动作定时器
     this._idleTimer = null
     // 情绪轮询定时器 / SSE
@@ -67,6 +69,8 @@ export class Live2DManager {
     this.onReady = null
     this.onError = null
     this.onExpressionChange = null
+    // T3-05: 唤醒状态变化回调（前端据此切"点亮"视觉）
+    this.onAwakeChange = null
   }
 
   /**
@@ -306,11 +310,40 @@ export class Live2DManager {
   }
 
   /**
-   * 唤醒响应（为 T3-05 预留）：播放唤醒动作 + 表情
+   * T3-05: 唤醒点亮。
+   *
+   * 从休眠态切换到活跃态：
+   * 1. 置 awake=true（前端据此给形象/背景加"点亮"光晕，恢复亮度）
+   * 2. 切到 excited 表情（睁眼、精神）
+   * 3. 播一个唤醒动作（TapBody = 轻拍/挥手），强调注意力
+   * 4. 通知 onAwakeChange(true)
+   * @returns {number|null} 若进入点亮态则返回恢复休眠的延时句柄（可 clearTimeout）
    */
-  onWake() {
+  wakeUp() {
+    this.setAwake(true)
     this.setExpression('excited')
     this.startMotion('TapBody', 1)
+    return null
+  }
+
+  /**
+   * 进入休眠态：表情回 neutral，awake=false（前端调暗/去光晕）
+   * 由组件在点亮动画结束后调用，或在窗口隐藏/托盘常驻时调用。
+   */
+  goToSleep() {
+    this.setAwake(false)
+    this.setExpression('neutral')
+  }
+
+  /**
+   * 切换活跃（点亮）状态，并广播变化。
+   * @param {boolean} val
+   */
+  setAwake(val) {
+    if (this.awake === val) return
+    this.awake = val
+    if (this.onAwakeChange) this.onAwakeChange(val)
+    console.info(`[Live2D] 形象${val ? '点亮' : '休眠'}`)
   }
 
   /**
@@ -356,6 +389,7 @@ export class Live2DManager {
       expression: this.currentExpression,
       modelLoaded: this.model !== null,
       emotionSync: this._eventSource !== null || this._emotionPollTimer !== null,
+      awake: this.awake,
     }
   }
 }

@@ -1,10 +1,12 @@
 <script setup>
 /**
- * Live2D 形象组件（T3-01/T3-02）
+ * Live2D 形象组件（T3-01/T3-02/T3-05）
  *
  * 在 canvas 中渲染 Live2D 模型，支持待机动画。
  * 无模型或库未加载时，显示 CSS 占位形象。
  * T3-02: 启动情绪联动，AI 情绪变化自动切换表情。
+ * T3-05: 唤醒点亮——检测到后端 wake_count 变化时，把形象从休眠态
+ *        点亮（亮度/光晕 + excited 表情 + 唤醒动作），并播报轻应声。
  *
  * 布局：左侧形象区 + 右侧对话区（由 App.vue 控制）
  */
@@ -18,9 +20,14 @@ const manager = getLive2DManager()
 const canvasRef = ref(null)
 const status = ref({ ready: false, error: '', expression: 'neutral' })
 const showPlaceholder = ref(true)
+// T3-05: 休眠(spent)状态。点亮态（true）时给形象加光晕、恢复亮度
+const awake = ref(false)
 
 // Live2D 模型路径（可从 config 读取，默认用占位模型目录）
 const MODEL_PATH = './live2d/default/default.model3.json'
+
+// 点亮动画持续时长（秒），与 config.wake_word.light_up_duration 对齐
+const LIGHT_UP_DURATION_MS = 1600
 
 // 后端 API 地址：优先取 Electron preload 暴露的真实地址，避免端口漂移
 function resolveApiBase() {
@@ -45,11 +52,57 @@ onMounted(async () => {
   manager.onExpressionChange = (name) => {
     status.value.expression = name
   }
+  // T3-05: 监听 awake 变化 → 切换"点亮"视觉
+  manager.onAwakeChange = (val) => {
+    awake.value = val
+  }
+  // T3-05: 轮询探测后端 wake_count 变化，触发点亮 + 轻应声
+  startWakePoller()
   // 占位形象：用 store 的情绪标签显示中文气泡（模型驱动时 expression 为后端英文名）
   if (window.companion) {
     initPlaceholderEmotion()
   }
 })
+
+// T3-05: 轮询 live2d/status 的 wake_count，检测到新增唤醒即点亮 + 轻应声
+let _lastWakeCount = 0
+let _wakePollTimer = null
+let _sleepTimer = null
+function startWakePoller() {
+  if (!window.companion) return
+  const tick = async () => {
+    try {
+      const data = await window.companion.live2dStatus()
+      if (typeof data.wake_count === 'number' && data.wake_count > _lastWakeCount) {
+        _lastWakeCount = data.wake_count
+        // 点亮形象 + 播轻应声
+        triggerLightUp(data.wake_greeting)
+      }
+    } catch (e) {
+      // 后端未就绪，静默
+    }
+  }
+  tick()
+  _wakePollTimer = setInterval(tick, 1000)
+}
+
+// T3-05: 点亮逻辑：恢复亮度 + 光晕，模型模式播唤醒动作/表情，
+//       等待 light_up_duration 后回到休眠态。同时播报轻应声。
+function triggerLightUp(greeting) {
+  awake.value = true
+  manager.wakeUp?.()
+  // T3-05: 若窗口已隐藏到托盘，唤醒时弹出并聚焦
+  window.companion?.window?.show?.()
+  if (_sleepTimer) clearTimeout(_sleepTimer)
+  _sleepTimer = setTimeout(() => {
+    awake.value = false
+    manager.goToSleep?.()
+  }, LIGHT_UP_DURATION_MS)
+  // 轻应声：用 TTS 播一句温柔的短应声（不打扰对话主流程）
+  if (window.companion && greeting) {
+    store.speak(greeting).catch(() => {})
+  }
+}
 
 // 占位形象情绪：轮询 live2d/status 拿中文情绪标签（模型未加载时驱动占位气泡）
 function initPlaceholderEmotion() {
@@ -85,10 +138,8 @@ async function initLive2D() {
 }
 
 function handleWake() {
-  // 唤醒按钮（测试用，实际由 T2-08 唤醒词触发）
-  if (status.value.ready) {
-    manager.onWake()
-  }
+  // 唤醒按钮（测试用，实际由 T3-05 轮询探测后端唤醒事件触发）
+  triggerLightUp('嗯，我在呢。')
 }
 
 // 窗口大小变化时重新适配
@@ -107,12 +158,24 @@ onUnmounted(() => {
     clearInterval(window._placeholderEmotionTimer)
     window._placeholderEmotionTimer = null
   }
+  if (_wakePollTimer) {
+    clearInterval(_wakePollTimer)
+    _wakePollTimer = null
+  }
+  if (_sleepTimer) {
+    clearTimeout(_sleepTimer)
+    _sleepTimer = null
+  }
   window.removeEventListener('resize', onResize)
 })
 </script>
 
 <template>
-  <div class="live2d-view" :data-expression="status.expression">
+  <div
+    class="live2d-view"
+    :data-expression="status.expression"
+    :class="{ sleeping: !awake, lit: awake }"
+  >
     <!-- Live2D canvas（模型加载后显示） -->
     <canvas
       ref="canvasRef"
@@ -174,6 +237,34 @@ onUnmounted(() => {
 }
 .live2d-view[data-expression="excited"] {
   background: linear-gradient(135deg, #2e2a1a 0%, #3e3616 100%);
+}
+
+/* T3-05: 休眠态——整个形象区调暗、去饱和，体现"没醒/待机"。
+   注意 canvas/placeholder 在容器内，容器的 filter 会整体作用于它们。 */
+.live2d-view.sleeping {
+  filter: brightness(0.5) saturate(0.55);
+  transition: filter 0.6s ease;
+}
+.live2d-view.lit {
+  filter: brightness(1.05) saturate(1.05);
+  transition: filter 0.4s ease;
+}
+.live2d-view.lit::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 6%;
+  width: 60%;
+  height: 12%;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse at center, rgba(160, 200, 255, 0.55) 0%, rgba(160, 200, 255, 0) 70%);
+  border-radius: 50%;
+  pointer-events: none;
+  animation: light-breath 1.4s ease-in-out infinite;
+}
+@keyframes light-breath {
+  0%, 100% { opacity: 0.4; transform: translateX(-50%) scale(0.9); }
+  50% { opacity: 1; transform: translateX(-50%) scale(1.08); }
 }
 
 .live2d-canvas {
