@@ -16,7 +16,7 @@
 // - 后端端口通过 BACKEND_PORT 环境变量覆盖，与 config.server.port 对齐
 // - 退出时清理子进程，避免端口残留
 
-const { app, BrowserWindow, shell, Tray, Menu, nativeImage, ipcMain } = require('electron')
+const { app, BrowserWindow, shell, Tray, Menu, nativeImage, ipcMain, Notification } = require('electron')
 const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
@@ -45,7 +45,7 @@ let isAutoStart = false
 // 0. 读取 T3-04 配置（纯文本解析 config.yaml 的 ui 段，避免引入 yaml 依赖）
 // ============================================================
 function readUiConfig() {
-  const def = { autoStart: false, minimizeToTray: true, tooltip: 'AI 陪伴助手' }
+  const def = { autoStart: false, minimizeToTray: true, tooltip: 'AI 陪伴助手', notificationsEnabled: true }
   try {
     const p = path.join(PROJECT_ROOT, 'config.yaml')
     if (!fs.existsSync(p)) return def
@@ -60,6 +60,7 @@ function readUiConfig() {
     def.autoStart = val('auto_start', 'false') === 'true'
     def.minimizeToTray = val('minimize_to_tray', 'true') !== 'false'
     def.tooltip = (val('tray_tooltip', 'AI 陪伴助手') || 'AI 陪伴助手').replace(/['"]/g, '')
+    def.notificationsEnabled = val('notifications_enabled', 'true') !== 'false'
     return def
   } catch (e) {
     return def
@@ -206,6 +207,34 @@ function registerIpc() {
   ipcMain.on('window:show', () => {
     showMainWindow()
   })
+  // T3-06: 桌面通知（提醒/天气等，通过渲染进程触发）
+  ipcMain.on('notify', (_e, payload) => {
+    showDesktopNotification(payload)
+  })
+  // T3-06: 通知开关查询（供渲染进程判断）
+  ipcMain.handle('notify:enabled', () => uiConfig.notificationsEnabled)
+}
+
+// T3-06: 发送桌面通知。
+// 遵循 config.ui.notifications_enabled 开关；通知点击时聚焦窗口。
+function showDesktopNotification(payload = {}) {
+  if (!uiConfig.notificationsEnabled) {
+    console.log('[notify] 桌面通知已被 config.ui.notifications_enabled 关闭')
+    return false
+  }
+  if (!Notification.isSupported()) {
+    console.warn('[notify] 当前系统不支持桌面通知')
+    return false
+  }
+  const title = payload.title || 'AI 陪伴助手'
+  const body = payload.body || ''
+  const opt = { title, body }
+  if (TRAY_ICON) opt.icon = TRAY_ICON
+  const n = new Notification(opt)
+  n.on('click', () => showMainWindow())
+  n.show()
+  console.log(`[notify] ${title}: ${body}`)
+  return true
 }
 
 // ============================================================

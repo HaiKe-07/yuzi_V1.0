@@ -15,6 +15,11 @@ onMounted(async () => {
   }
 })
 
+function testNotify() {
+  // T3-06: 发送一条测试桌面通知，验证系统通知权限与通路
+  store.notify({ title: 'AI 陪伴助手', body: '这是一条测试通知：提醒/天气等将在这里弹出。' })
+}
+
 async function save() {
   saving.value = true
   message.value = ''
@@ -89,6 +94,12 @@ async function save() {
       </label>
     </section>
 
+    <section>
+      <h3>桌面通知</h3>
+      <button @click="testNotify">发送测试通知</button>
+      <p class="hint">提醒、天气等事件将通过系统通知弹出。</p>
+    </section>
+
     <div class="actions">
       <button @click="save" :disabled="saving">
         {{ saving ? '保存中...' : '保存' }}
@@ -159,5 +170,10 @@ input:focus, select:focus {
 .msg {
   color: var(--success);
   font-size: 12px;
+}
+.hint {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin: 6px 0 0;
 }
 </style>

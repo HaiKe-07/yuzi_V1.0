@@ -64,4 +64,6 @@ contextBridge.exposeInMainWorld('companion', {
       ipcRenderer.on('window:always-on-top-changed', (_e, opts) => cb(opts))
     },
   },
+  // T3-06: 桌面通知
+  notify: (payload) => ipcRenderer.send('notify', payload),
 })

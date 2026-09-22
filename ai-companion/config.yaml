@@ -167,6 +167,8 @@ ui:
   auto_start: false              # 是否开机自启
   minimize_to_tray: true         # 关闭窗口时最小化到托盘（而非退出）
   tray_tooltip: "AI 陪伴助手"     # 托盘挂起提示文案
+  # T3-06: 桌面通知
+  notifications_enabled: true     # 是否允许弹出桌面通知（提醒/天气等）
 
 # 工具
 tools:

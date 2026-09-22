@@ -72,8 +72,13 @@ export const useCompanionStore = defineStore('companion', () => {
     return await api().updateSettings(updates)
   }
 
+  // T3-06: 发桌面通知（走主进程 Notification；不依赖后端）
+  function notify(payload) {
+    api().notify(payload)
+  }
+
   return {
     ready, status, history, loading, error,
-    init, sendText, speak, getSettings, updateSettings,
+    init, sendText, speak, getSettings, updateSettings, notify,
   }
 })
