@@ -180,6 +180,9 @@ tools:
     api: "qweather"
     api_key: "${QWEATHER_API_KEY}"
     default_city: "深圳"       # 未指定城市时的默认查询城市
+  reminder:
+    enabled: false
+    check_interval: 1         # 轮询间隔（秒）
 
 # 本地 HTTP API（供 Electron 前端调用）
 server:
