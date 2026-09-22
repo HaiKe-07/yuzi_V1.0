@@ -3,7 +3,7 @@
 // 通过 contextBridge 暴露 window.companion API，渲染进程
 // 不直接持有 Node 能力，只通过 ipcRenderer-like 接口与后端通信。
 
-const { contextBridge, ipcRenderer } = require('electron')
+const { contextBridge } = require('electron')
 
 const BACKEND_PORT = parseInt(process.env.BACKEND_PORT || '18731', 10)
 const BASE = `http://127.0.0.1:${BACKEND_PORT}/api`
@@ -49,16 +49,12 @@ contextBridge.exposeInMainWorld('companion', {
     method: 'PUT',
     body: JSON.stringify(updates),
   }),
-  // 窗口控制（无边框标题栏 / 托盘，T3-04）
+  // 窗口控制（无边框标题栏用）
   window: {
-    minimize: () => ipcRenderer.send('window:minimize'),
-    close: () => ipcRenderer.send('window:close'),   // 关闭 = 隐藏到托盘
-    hide: () => ipcRenderer.send('window:hide'),
-    show: () => ipcRenderer.send('window:show'),
-  },
-  // 托盘 / 开机自启（T3-04）
-  app: {
-    getAutoLaunch: () => ipcRenderer.invoke('app:getAutoLaunch'),
-    setAutoLaunch: (enabled) => ipcRenderer.invoke('app:setAutoLaunch', !!enabled),
+    minimize: () => {
+      // 通过 ipcRenderer 走主进程；此处简化为 fetch 不需要
+      // 真实实现需要 ipcRenderer.send
+    },
+    close: () => {},
   },
 })
