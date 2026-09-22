@@ -6,8 +6,13 @@
 - reminder: 定时提醒（T4-02）
 - recommend: 情绪推荐音乐（T4-03）
 - web_info: 网络资讯查询（T4-04）
+- base: 工具抽象层 + 注册机制（T4-05）
 """
 
+from tools.base import (  # noqa: F401
+    BaseTool, ToolResult, ToolError, ToolRegistry,
+    registry, register, build,
+)
 from tools.music import MusicController, MusicCommand, parse_command  # noqa: F401
 from tools.recommend import recommend, recommend_and_play  # noqa: F401
 from tools.reminder import Reminder, ReminderManager, parse_time  # noqa: F401
@@ -15,6 +20,7 @@ from tools.web_info import NewsItem, WebInfo  # noqa: F401
 from tools.weather import QWeatherClient, WeatherService, parse_location  # noqa: F401
 
 __all__ = [
+    "BaseTool", "ToolResult", "ToolError", "ToolRegistry", "registry", "register", "build",
     "MusicController", "MusicCommand", "parse_command",
     "QWeatherClient", "WeatherService", "parse_location",
     "Reminder", "ReminderManager", "parse_time",
