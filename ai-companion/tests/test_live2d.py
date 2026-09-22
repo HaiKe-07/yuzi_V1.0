@@ -137,7 +137,14 @@ def test_live2d_manager_js_exists():
     assert "lipSync" in content
     assert "onWake" in content
     # T3-02: 前端直接消费后端返回的 expression（SSE/live2d/status），无需本地映射表
-    print("  [✓] manager.js 结构完整（含情绪联动接口）")
+    # T3-03: 进阶交互接口
+    assert "_hitModel" in content
+    assert "_hitTestRegions" in content
+    assert "_onTapReaction" in content
+    assert "_snapBack" in content
+    assert "onBodyTap" in content
+    assert "onDragEnd" in content
+    print("  [✓] manager.js 结构完整（含情绪联动 + 进阶交互接口）")
 
 
 def test_live2d_view_vue_exists():
@@ -149,7 +156,12 @@ def test_live2d_view_vue_exists():
     assert "placeholder" in content
     assert "getLive2DManager" in content
     assert "onMounted" in content
-    print("  [✓] Live2DView.vue 结构完整")
+    # T3-03: 交互反馈
+    assert "onBodyTap" in content
+    assert "onDragEnd" in content
+    assert "tapHint" in content
+    assert "handlePlaceholderTap" in content
+    print("  [✓] Live2DView.vue 结构完整（含交互反馈）")
 
 
 def test_app_vue_includes_live2d():

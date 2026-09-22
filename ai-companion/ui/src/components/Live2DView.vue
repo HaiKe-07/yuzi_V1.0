@@ -45,11 +45,35 @@ onMounted(async () => {
   manager.onExpressionChange = (name) => {
     status.value.expression = name
   }
+  // T3-03: 进阶交互反馈（点击反应气泡 / 拖拽提示）
+  manager.onBodyTap = (part) => {
+    status.value.tapHint = tapMessage(part)
+    indicateTap()
+  }
+  manager.onDragEnd = () => {
+    status.value.tapHint = '👋 回来啦'
+    indicateTap()
+  }
   // 占位形象：用 store 的情绪标签显示中文气泡（模型驱动时 expression 为后端英文名）
   if (window.companion) {
     initPlaceholderEmotion()
   }
 })
+
+// T3-03: 点击/拖拽瞬时提示气泡（1.2s 后淡出）
+let _tapHintTimer = null
+function indicateTap() {
+  if (_tapHintTimer) clearTimeout(_tapHintTimer)
+  _tapHintTimer = setTimeout(() => { status.value.tapHint = '' }, 1200)
+}
+function tapMessage(part) {
+  const map = {
+    Body: '嘿嘿，别戳～', Head: '诶，头不可以乱摸！',
+    TapLeft: '哎哟～', TapRight: '哎哟～',
+    TapLeftEar: '耳朵痒痒的…', TapRightEar: '耳朵痒痒的…',
+  }
+  return map[part] || '呀！'
+}
 
 // 占位形象情绪：轮询 live2d/status 拿中文情绪标签（模型未加载时驱动占位气泡）
 function initPlaceholderEmotion() {
@@ -84,10 +108,13 @@ async function initLive2D() {
   }
 }
 
-function handleWake() {
-  // 唤醒按钮（测试用，实际由 T2-08 唤醒词触发）
+function handlePlaceholderTap() {
+  // 模型已就绪 → 唤醒动画（实际唤醒由 T2-08 触发）；否则占位形象点击反馈
   if (status.value.ready) {
     manager.onWake()
+  } else {
+    status.value.tapHint = '呀！'
+    indicateTap()
   }
 }
 
@@ -142,10 +169,15 @@ onUnmounted(() => {
       </p>
     </div>
 
-    <!-- 测试按钮 -->
-    <button class="wake-btn" @click="handleWake" title="模拟唤醒">
-      {{ status.ready ? '唤醒形象' : '' }}
-    </button>
+    <!-- T3-03: 点击/拖拽瞬时反馈气泡 -->
+    <transition name="pop">
+      <div v-if="status.tapHint" class="tap-hint">{{ status.tapHint }}</div>
+    </transition>
+
+    <!-- T3-03: 无模型时点占位形象也有反馈 -->
+    <div class="wake-btn" @click="handlePlaceholderTap" title="模拟点击反应">
+      {{ status.ready ? '唤醒形象' : '戳我' }}
+    </div>
   </div>
 </template>
 
@@ -179,9 +211,38 @@ onUnmounted(() => {
 .live2d-canvas {
   width: 100%;
   height: 100%;
+  cursor: grab;
+  touch-action: none;
 }
 .live2d-canvas.hidden {
   display: none;
+}
+
+/* T3-03: 点击/拖拽瞬时反馈气泡 */
+.tap-hint {
+  position: absolute;
+  top: 8%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  font-size: 13px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 10;
+}
+.pop-enter-active,
+.pop-leave-active {
+  transition: all 0.2s ease;
+}
+.pop-enter-from,
+.pop-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-6px);
 }
 
 /* 占位形象 */

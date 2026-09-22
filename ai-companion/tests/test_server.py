@@ -204,6 +204,39 @@ def test_electron_main_uses_backend_port():
     print("  [✓] electron/main.js 启动 Python 后端 + 健康检查")
 
 
+def test_electron_tray_autostart_t34():
+    """T3-04: 系统托盘 + 开机自启 + 单实例锁 + 关闭隐藏到托盘。"""
+    p = ROOT / "ui" / "electron" / "main.js"
+    content = p.read_text(encoding="utf-8")
+    # 托盘
+    assert "Tray" in content
+    assert "setContextMenu" in content
+    assert "createTray" in content
+    # 开机自启
+    assert "setLoginItemSettings" in content
+    assert "getLoginItemSettings" in content
+    assert "setAutoLaunch" in content
+    # 单实例锁
+    assert "requestSingleInstanceLock" in content
+    assert "second-instance" in content
+    # 关闭 → 隐藏到托盘（常驻不退出）
+    assert "hideToTray" in content
+    assert "event.preventDefault()" in content
+    # 唤醒 → 从托盘弹出
+    assert "startWakePolling" in content
+    assert "/api/live2d/status" in content
+
+    # preload 暴露托盘 / 窗口控制 IPC
+    pre = ROOT / "ui" / "electron" / "preload.js"
+    pc = pre.read_text(encoding="utf-8")
+    assert "ipcRenderer" in pc
+    assert "window:minimize" in pc
+    assert "window:close" in pc
+    assert "app:setAutoLaunch" in pc
+    assert "app:getAutoLaunch" in pc
+    print("  [✓] T3-04 系统托盘 + 开机自启 + 单实例锁 + 唤醒弹出结构完整")
+
+
 def test_vue_components_reference_api():
     """Vue 组件应通过 window.companion 调用后端。"""
     files = [
@@ -231,6 +264,7 @@ def main() -> int:
     test_electron_scaffold_files()
     test_package_json_valid()
     test_electron_main_uses_backend_port()
+    test_electron_tray_autostart_t34()
     test_vue_components_reference_api()
     print("\n全部通过 ✅")
     return 0
