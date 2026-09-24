@@ -38,6 +38,23 @@
       "dist/**/*",
       "assets/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "../packaging/dist/backend",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../config.yaml",
+        "to": "config.yaml"
+      },
+      {
+        "from": "assets",
+        "to": "assets"
+      }
+    ],
     "win": {
       "target": "nsis",
       "icon": "assets/tray.png"

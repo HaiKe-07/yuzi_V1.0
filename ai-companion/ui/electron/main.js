@@ -26,12 +26,22 @@ const http = require('http')
 const BACKEND_PORT = parseInt(process.env.BACKEND_PORT || '18731', 10)
 const BACKEND_HOST = '127.0.0.1'
 
-// 项目根（ui/ 的上一级 = ai-companion/）
+// 项目根（ui/ 的上一级 = ai-companion/）；打包态 app.asar 内
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..')
 // server.py 路径（ai-companion/server.py）
 const SERVER_PATH = path.join(PROJECT_ROOT, 'server.py')
-// 托盘图标路径（ui/assets/tray.png）
-const TRAY_ICON = path.join(__dirname, '..', 'assets', 'tray.png')
+// 打包态资源目录（electron-builder extraResources）
+const RESOURCES_DIR = app.isPackaged ? process.resourcesPath : null
+// 打包态用户数据目录：后端 config.yaml / .env / data / logs 的根（AI_COMPANION_HOME）
+const USER_DATA_DIR = app.isPackaged ? app.getPath('userData') : null
+// 托盘图标：打包态在 resources/assets，开发态在 ui/assets
+const TRAY_ICON = app.isPackaged
+  ? path.join(process.resourcesPath, 'assets', 'tray.png')
+  : path.join(__dirname, '..', 'assets', 'tray.png')
+// 配置读取路径：打包态优先用户数据目录（首启由 ensureUserConfig 从资源复制）
+const CONFIG_YAML = app.isPackaged
+  ? path.join(USER_DATA_DIR, 'config.yaml')
+  : path.join(PROJECT_ROOT, 'config.yaml')
 
 let pythonProc = null
 let mainWindow = null
@@ -47,7 +57,7 @@ let isAutoStart = false
 function readUiConfig() {
   const def = { autoStart: false, minimizeToTray: true, tooltip: 'AI 陪伴助手', notificationsEnabled: true }
   try {
-    const p = path.join(PROJECT_ROOT, 'config.yaml')
+    const p = CONFIG_YAML
     if (!fs.existsSync(p)) return def
     const text = fs.readFileSync(p, 'utf8')
     // 只取 ui: 块，避免误匹配其它同名 key
@@ -68,6 +78,26 @@ function readUiConfig() {
 }
 const uiConfig = readUiConfig()
 
+// 打包态首启：把资源目录里的 config.yaml / .env 复制到用户数据目录（后续用户改的是这份）。
+// 非打包态不做任何事。
+function ensureUserConfig() {
+  if (!app.isPackaged) return
+  try {
+    fs.mkdirSync(USER_DATA_DIR, { recursive: true })
+    for (const name of ['config.yaml', '.env']) {
+      const src = path.join(RESOURCES_DIR, name)
+      const dst = path.join(USER_DATA_DIR, name)
+      if (fs.existsSync(src) && !fs.existsSync(dst)) {
+        fs.copyFileSync(src, dst)
+        console.log(`[main] 已初始化用户配置: ${dst}`)
+      }
+    }
+  } catch (e) {
+    console.warn('[main] 初始化用户配置失败', e.message)
+  }
+}
+ensureUserConfig()
+
 function applyAutoStartPreference() {
   // 打包安装后需要有 app.setLoginItemSettings；开发态一般不可用，静默忽略
   try {
@@ -82,15 +112,36 @@ function applyAutoStartPreference() {
 // 1. Python 后端子进程
 // ============================================================
 function startPythonBackend() {
-  const pythonBin = process.env.PYTHON_BIN || 'python'
-  console.log(`[main] 启动 Python 后端: ${pythonBin} ${SERVER_PATH}`)
+  let cmd, args
+  let cwd = PROJECT_ROOT
+  if (app.isPackaged) {
+    // 打包态：运行 PyInstaller 打包好的后端可执行文件（不依赖用户安装 Python）
+    const backendBin = process.platform === 'win32'
+      ? 'ai-companion-server.exe'
+      : 'ai-companion-server'
+    const bin = path.join(RESOURCES_DIR, 'backend', backendBin)
+    if (!fs.existsSync(bin)) {
+      console.error(`[main] 打包后端缺失: ${bin}`)
+      return
+    }
+    cmd = bin
+    args = []
+    cwd = USER_DATA_DIR
+  } else {
+    // 开发态：用系统 Python 直接跑 server.py
+    cmd = process.env.PYTHON_BIN || 'python'
+    args = [SERVER_PATH]
+  }
+  console.log(`[main] 启动 Python 后端: ${cmd} ${args.join(' ')}`)
 
-  pythonProc = spawn(pythonBin, [SERVER_PATH], {
-    cwd: PROJECT_ROOT,
+  pythonProc = spawn(cmd, args, {
+    cwd,
     env: {
       ...process.env,
       // 让 uvicorn 知道端口
       BACKEND_PORT: String(BACKEND_PORT),
+      // 打包态：告诉后端把 config.yaml / data / logs 放到用户数据目录
+      AI_COMPANION_HOME: USER_DATA_DIR || undefined,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -115,8 +166,8 @@ function stopPythonBackend() {
   }
 }
 
-// 等待后端 /api/health 就绪（轮询，最长 30s）
-function waitForBackend(maxRetries = 30, intervalMs = 1000) {
+// 等待后端 /api/health 就绪（轮询，最长 60s；打包态 onefile 首启解压较慢）
+function waitForBackend(maxRetries = 60, intervalMs = 1000) {
   return new Promise((resolve, reject) => {
     let tries = 0
     const check = () => {

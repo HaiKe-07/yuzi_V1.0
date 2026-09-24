@@ -47,14 +47,19 @@ class Config:
     _instance: "Config | None" = None
 
     def __init__(self, config_path: str | Path | None = None):
-        # 项目根目录 = 本文件上一级
-        root = Path(__file__).resolve().parent.parent
-        self._root = root
-        env_path = root / ".env"
+        # 打包运行模式：Electron 主进程会设置 AI_COMPANION_HOME 指向用户数据目录
+        # （config.yaml / .env / data / logs 都放那里，避免写入安装目录）。
+        # 未设置时保持源码运行模式：项目根目录 = 本文件上一级。
+        home = os.getenv("AI_COMPANION_HOME")
+        if home:
+            self._root = Path(home)
+        else:
+            self._root = Path(__file__).resolve().parent.parent
+        env_path = self._root / ".env"
         if env_path.exists():
             load_dotenv(env_path)
 
-        cfg_path = Path(config_path) if config_path else root / "config.yaml"
+        cfg_path = Path(config_path) if config_path else self._root / "config.yaml"
         if not cfg_path.exists():
             raise FileNotFoundError(f"配置文件不存在: {cfg_path}")
         with cfg_path.open("r", encoding="utf-8") as f:
